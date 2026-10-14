@@ -2,9 +2,33 @@
 
 面向游戏数字人的展示 demo：照片 / 视频 / 摄像头三种输入 → 52 维 BlendShape + 头部姿态 → 驱动 VRM 皮套人。
 
-本目录当前只有**后端**（`backend/`，本 PR 交付）。前端页面（pollo.ai 式三步交互）后续 PR 加入。
+**架构现状（2026-10-14 起）**：感知层已全部搬到浏览器（MediaPipe Tasks JS，vendored），
+**服务器只做静态托管 + 模型分发**——前端零后端依赖，任何静态服务器都能跑；
+摄像头实时需要 secure context（localhost 或 HTTPS，裸 HTTP 的公网 IP 被浏览器禁用摄像头 API）。
+Python 后端（`backend/`）保留为开发调试工具与旧 fusion 链路，前端不再调用其推理 API。
 
-## 后端在后端管线里的位置
+## 模型分发（更新模型 = 换文件 + 版本号 +1）
+
+- `frontend/models/manifest.json`：模型清单（name / url / version / sizeBytes），入库；
+  模型本体（`face_landmarker.task` 等）按仓库政策不入库，需 scp 到部署目录。
+- 浏览器每次打开页面拉 manifest 比对版本 → 变了才下载 → IndexedDB 缓存。
+- 发布新模型：文件放进 `frontend/models/` + manifest 版本号 +1，访客下次打开自动更新。
+
+## 运行（前端，纯静态即可）
+
+```powershell
+# 方式一：用 Python 后端托管（顺带提供旧 API）
+cd D:\DASH\V0FastTest
+& D:\Miniconda3\python.exe -m showcase.backend serve --no-camera
+
+# 方式二：任意静态服务器（云端 Nginx 同款）
+cd D:\DASH\V0FastTest\showcase\frontend
+& D:\Miniconda3\python.exe -m http.server 8770
+```
+
+浏览器打开 `http://127.0.0.1:8770/`（或 localhost——摄像头模式必须 secure context）。
+
+## 后端在后端管线里的位置（开发/调试用，保留）
 
 ```
 摄像头 ─→ backend/camera_stream ─→ miniface-frame (ws :8765) ─┐

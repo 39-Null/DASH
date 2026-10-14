@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DASH · 微表情皮套人</title>
-<link rel="stylesheet" href="styles.css?v=3">
+<link rel="stylesheet" href="styles.css?v=4">
 <script type="importmap">
 {"imports":{
   "three": "./vendor/three.module.js",
@@ -66,7 +66,7 @@
       <!-- 版本开关：虚线框外侧下侧 -->
       <div class="mode-switch mono" id="mode-switch">
         <button class="mode-btn active" data-mode="a">仅面部识别</button>
-        <button class="mode-btn" data-mode="b">全体识别</button>
+        <button class="mode-btn" data-mode="b" disabled title="二期开放">全体识别（二期）</button>
       </div>
 
       <div class="card-foot">
@@ -98,8 +98,8 @@
       </div>
 
       <div class="card-foot">
-        <label class="picker mono">后端
-          <select id="backend-select" disabled><option>加载中…</option></select>
+        <label class="picker mono">模型
+          <select id="model-select" disabled><option>加载中…</option></select>
         </label>
         <label class="picker mono">
           <input type="checkbox" id="mesh-toggle" checked> 网格叠加
@@ -161,6 +161,6 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js?v=3"></script>
+<script type="module" src="src/main.js?v=4"></script>
 </body>
 </html>
