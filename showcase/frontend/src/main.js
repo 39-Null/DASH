@@ -1,10 +1,12 @@
-// 状态机与组装：landing / stage(camera|photo|video)（设计 §4）
-import * as api from "./api.js?v=4";
+// 状态机与组装：landing / stage(camera|photo|video)
+// 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
 import { Avatar } from "./avatar.js?v=4";
 import { MeshOverlay } from "./mesh.js?v=4";
 import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=4";
 import { SourceInput } from "./input.js?v=4";
 import { poseMetrics, handMetrics } from "./metrics.js?v=4";
+import * as perception from "./perception.js?v=4";
+import { ensureModel, blobToBuffer } from "./modelstore.js?v=4";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -23,7 +25,7 @@ const els = {
   meshCanvas: $("mesh-canvas"),
   nofaceBadge: $("noface-badge"),
   renderIdle: $("render-idle"),
-  backendSelect: $("backend-select"),
+  modelSelect: $("model-select"),
   meshToggle: $("mesh-toggle"),
   stripTitle: $("strip-title"),
   stripTag: $("strip-tag"),
@@ -35,19 +37,19 @@ const els = {
 };
 
 let state = "landing"; // landing | camera | photo | video
-let ws = null;
-let wsReconnectTimer = null;
-let lastFaceMsgAt = 0;
-let lastFacePresentAt = 0; // 最近一次「帧内有人脸」的时刻
-let faceMsgCount = 0;
-let videoFrames = []; // video 模式：后端逐帧结果（按 timestampMs 升序）
+let camRunning = false;
+let lastFacePresentAt = 0;
+let frameCount = 0;
+let videoFrames = []; // video 模式：本地批处理的逐帧结果
 
-// 版本：A 面部 / B 全身（对应后端 mediapipe-task / mediapipe-full）
-const MODE_BACKENDS = { a: "mediapipe-task", b: "mediapipe-full" };
-const MODE_GROUPS = { a: GROUPS_A, b: GROUPS_B };
+// 感知实例（boot 时创建；切模型时重建）
+let faceLmVideo = null;
+let faceLmImage = null;
+let activeModelName = "face_landmarker";
+
+// 版本：A 面部（当前）；B 全身（二期，按钮置灰）
 const MODE_VIEWS = { a: ["head"], b: ["head", "half", "full"] };
 let mode = "a";
-let expectedBackend = MODE_BACKENDS[mode]; // 页面认定的后端；服务重启 / 切换失败时用它对齐
 
 const input = new SourceInput({ box: els.sourceBox, image: els.sourceImage, video: els.sourceVideo });
 const mesh = new MeshOverlay(els.meshCanvas);
@@ -65,17 +67,22 @@ function showOverlay(text, withRetry) {
   els.overlay.hidden = false;
 }
 
-function hideOverlay() {
-  els.overlay.hidden = true;
-}
-
 function flatLandmarks(lm) {
   if (!lm) return null;
-  if (Array.isArray(lm[0])) return lm.flat(); // photo API 的嵌套形式
-  return lm; // WS / video NDJSON 的 flat 形式
+  if (Array.isArray(lm[0])) return lm.flat(); // photo API 时代的嵌套数组
+  if (typeof lm[0] === "object" && lm[0] !== null && "x" in lm[0]) {
+    const out = new Array(lm.length * 3);
+    for (let i = 0; i < lm.length; i++) {
+      out[i * 3] = lm[i].x;
+      out[i * 3 + 1] = lm[i].y;
+      out[i * 3 + 2] = lm[i].z;
+    }
+    return out;
+  }
+  return lm; // 已是 flat
 }
 
-function applyFrame({ blendshapes, headEuler, landmarks, pose, hands }, { advanceReadout = true } = {}) {
+function applyFrame({ blendshapes, headEuler, landmarks }, { advanceReadout = true } = {}) {
   const facePresent = !!landmarks;
   if (facePresent) {
     lastFacePresentAt = performance.now();
@@ -85,59 +92,26 @@ function applyFrame({ blendshapes, headEuler, landmarks, pose, hands }, { advanc
     els.renderIdle.hidden = true;
   }
   mesh.draw(facePresent ? flatLandmarks(landmarks) : null);
-  // 骨骼与手部（B 版本的消息带这两段）
-  const extras = {};
-  if (pose && avatar.rig) {
-    avatar.setPose(pose.image, pose.world);
-    Object.assign(extras, poseMetrics(pose.image) || {});
-    els.renderIdle.hidden = true;
-  }
-  if (hands && avatar.rig) {
-    avatar.setHands(hands);
-    const lm = handMetrics(hands.left);
-    const rm = handMetrics(hands.right);
-    if (lm) {
-      extras.indexCurlL = lm.indexCurl;
-      extras.fistL = lm.fist;
-    }
-    if (rm) {
-      extras.indexCurlR = rm.indexCurl;
-      extras.fistR = rm.fist;
-    }
-  }
-  if (advanceReadout) readout.update(facePresent ? blendshapes : [], extras);
+  if (advanceReadout) readout.update(facePresent ? blendshapes : [], {});
 }
 
 // 预计算一帧的读数分（视频回放模式用：读数跟随视频进度而非墙钟）
 function buildScores(frame) {
   const scores = {};
   if (frame.blendshapes) for (const c of frame.blendshapes) scores[c.categoryName] = c.score;
-  if (frame.pose?.image) Object.assign(scores, poseMetrics(frame.pose.image) || {});
-  if (frame.hands) {
-    const lm = handMetrics(frame.hands.left);
-    const rm = handMetrics(frame.hands.right);
-    if (lm) {
-      scores.indexCurlL = lm.indexCurl;
-      scores.fistL = lm.fist;
-    }
-    if (rm) {
-      scores.indexCurlR = rm.indexCurl;
-      scores.fistR = rm.fist;
-    }
-  }
   return scores;
 }
 
 /* ---------------- 状态切换 ---------------- */
-function enterStage(mode) {
-  state = mode;
+function enterStage(mode_) {
+  state = mode_;
   els.dropzone.hidden = true;
   els.sourceView.hidden = false;
   els.polaroidRow.hidden = true;
   els.readoutEl.hidden = false;
   els.stopBtn.hidden = false;
-  els.btnSecondary.hidden = mode === "camera";
-  els.btnSecondary.textContent = mode === "photo" ? "换一张" : "换一个";
+  els.btnSecondary.hidden = mode_ === "camera";
+  els.btnSecondary.textContent = mode_ === "photo" ? "换一张" : "换一个";
   els.stripTitle.textContent = "实时表情读数";
   els.stripTag.textContent = "LIVE BLENDSHAPES";
   readout.reset();
@@ -149,13 +123,11 @@ function enterStage(mode) {
 
 function backToLanding() {
   state = "landing";
-  if (ws) { try { ws.close(); } catch {} ws = null; }
-  clearTimeout(wsReconnectTimer);
-  input.stop();
+  camRunning = false;
+  input.stop(); // 会停掉 getUserMedia 的 tracks
   mesh.clear();
   readout.reset();
   videoFrames = [];
-  // 复位：视角回「面部」默认（远景与左右与默认面部视角一致），骨骼回标准姿态
   if (avatar) {
     avatar.resetPose();
     avatar.setView("head");
@@ -177,78 +149,87 @@ function backToLanding() {
   els.fps.textContent = "";
 }
 
-/* ---------------- camera 模式 ---------------- */
-function startCamera() {
+/* ---------------- camera 模式（本地推理） ---------------- */
+async function startCamera() {
   enterStage("camera");
-  setStatus("正在连接摄像头…");
-  input.startCamera((err) => {
-    if (state !== "camera") return;
-    setStatus("摄像头帧流不可用，试试照片模式");
-    console.warn(err);
-  });
-  openFaceWS();
+  setStatus("正在打开摄像头…");
+  try {
+    await input.startCamera();
+  } catch (e) {
+    const insecure = !(location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname));
+    setStatus(insecure
+      ? "裸 HTTP 页面浏览器禁用了摄像头——请用照片/视频，或在 localhost 打开"
+      : "摄像头没权限。点「换一个」改用照片试试");
+    console.warn(e);
+    return;
+  }
+  setStatus("● 运行中（camera · 本地推理）");
+  camRunning = true;
+  cameraLoop();
 }
 
-function openFaceWS() {
-  if (state !== "camera") return;
-  ws = api.connectFaceWS(
-    (msg) => {
-      if (state !== "camera") return;
-      lastFaceMsgAt = performance.now();
-      faceMsgCount++;
-      els.nofaceBadge.hidden = true;
-      applyFrame(msg);
-    },
-    () => setStatus("● 运行中（camera）"),
-    () => {
-      if (state !== "camera") return;
-      setStatus("连接断开，3s 后重连…");
-      wsReconnectTimer = setTimeout(openFaceWS, 3000);
+async function cameraLoop() {
+  const video = els.sourceVideo;
+  while (camRunning && state === "camera") {
+    if (video.readyState >= 2 && faceLmVideo) {
+      try {
+        const frame = perception.toFrame(faceLmVideo.detectForVideo(video, performance.now()));
+        frameCount++;
+        if (frame) applyFrame(frame);
+        else {
+          mesh.clear();
+          readout.update([], {}); // 零值推进，轨道不冻结
+        }
+      } catch {
+        // 时间戳回退等瞬时错误跳过这一帧
+      }
     }
-  );
+    await new Promise((r) => requestAnimationFrame(r));
+  }
 }
 
-/* ---------------- photo 模式 ---------------- */
+/* ---------------- photo 模式（本地推理） ---------------- */
 async function startPhoto(file) {
   enterStage("photo");
-  setStatus("分析照片中…");
+  setStatus("分析照片中…（本地推理）");
   input.setPhoto(file);
   try {
-    const result = await api.analyzePhoto(file);
-    applyFrame(result);
-    setStatus(`photo · 后端 ${result.backend} · 推理 ${result.inferenceMs} ms`);
+    const bitmap = await createImageBitmap(file);
+    const frame = perception.toFrame(faceLmImage.detect(bitmap));
+    if (!frame) {
+      setStatus("没有检测到人脸，换一张试试");
+      return;
+    }
+    applyFrame(frame);
+    setStatus("photo · 本地推理完成");
   } catch (e) {
     setStatus(String(e.message || e));
   }
 }
 
-/* ---------------- video 模式 ---------------- */
-function startVideo(file) {
+/* ---------------- video 模式（本地批处理 + 回放读数） ---------------- */
+async function startVideo(file) {
   enterStage("video");
-  setStatus("上传并逐帧处理中…");
   input.setVideo(file);
-  videoFrames = [];
-  api.streamVideo(
-    file,
-    (item) => {
-      if (item.ok && item.blendshapes) {
-        item.scores = buildScores(item); // 读数分在入库时算一次，回放零计算
-        videoFrames.push(item);
-        if (videoFrames.length % 50 === 0) {
-          setStatus(`video · 已处理 ${videoFrames.length} 帧…`);
-        }
-      }
-    },
-    (err) => setStatus(String(err.message || err))
-  ).then(() => {
-    if (state === "video") setStatus(`video · 已处理 ${videoFrames.length} 帧 · 播放即同步`);
+  const video = els.sourceVideo;
+  await new Promise((r) => video.addEventListener("loadedmetadata", r, { once: true }));
+  setStatus("本地逐帧处理中…");
+  const frames = await perception.processVideo(video, faceLmVideo, (done, total) => {
+    setStatus(`本地逐帧处理中… ${done}/${total}`);
   });
+  videoFrames = [];
+  for (const item of frames) {
+    if (item.ok && item.blendshapes) {
+      item.scores = buildScores(item);
+      videoFrames.push(item);
+    }
+  }
+  setStatus(`video · 已处理 ${videoFrames.length} 帧 · 播放即同步`);
 }
 
 function onVideoTime() {
   if (state !== "video" || !videoFrames.length) return;
   const t = els.sourceVideo.currentTime * 1000;
-  // 二分：最后一个 timestampMs <= t 的帧
   let lo = 0, hi = videoFrames.length - 1, best = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -256,89 +237,52 @@ function onVideoTime() {
     else hi = mid - 1;
   }
   if (best >= 0 && t - videoFrames[best].timestampMs < 600) {
-    applyFrame(videoFrames[best], { advanceReadout: false }); // 皮套人与网格用预计算数据
+    applyFrame(videoFrames[best], { advanceReadout: false });
   }
   readout.renderPlayback(videoFrames, t); // 读数轴跟随视频进度（可回拖）
 }
 
-/* ---------------- 后端热切换 ---------------- */
-async function refreshBackends() {
+/* ---------------- 模型下拉（客户端切换；蒸馏 ONNX 二期加入） ---------------- */
+async function refreshModels() {
   try {
-    const data = await api.listBackends();
-    els.backendSelect.innerHTML = "";
-    for (const b of data.backends) {
+    const manifest = await (await fetch("models/manifest.json", { cache: "no-cache" })).json();
+    els.modelSelect.innerHTML = "";
+    for (const m of manifest.models) {
       const opt = document.createElement("option");
-      opt.value = b.name;
-      opt.textContent = b.available ? b.name : `${b.name}（缺模型）`;
-      opt.disabled = !b.available;
-      opt.selected = b.name === data.active;
-      els.backendSelect.appendChild(opt);
+      opt.value = m.name;
+      opt.textContent = m.name === "face_landmarker" ? "mediapipe-task" : m.name;
+      opt.selected = m.name === activeModelName;
+      els.modelSelect.appendChild(opt);
     }
-    els.backendSelect.disabled = false;
+    els.modelSelect.disabled = els.modelSelect.options.length < 2;
   } catch {
-    els.backendSelect.innerHTML = "<option>后端离线</option>";
+    els.modelSelect.innerHTML = "<option>manifest 读取失败</option>";
   }
 }
 
-async function onBackendChange() {
-  const name = els.backendSelect.value;
-  els.backendSelect.disabled = true;
+async function onModelChange() {
+  const name = els.modelSelect.value;
+  if (name === activeModelName) return;
+  els.modelSelect.disabled = true;
+  setStatus(`正在切换模型：${name}…`);
   try {
-    await api.switchBackend(name);
-    expectedBackend = name; // 用户的主动选择也是「页面认定的后端」
-    setStatus(`后端已切换：${name}`);
-    syncModeUI(name === "mediapipe-full" ? "b" : "a"); // 下拉与版本开关联动
+    const { blob } = await ensureModel(name);
+    const buf = await blobToBuffer(blob);
+    const nv = await perception.createFaceLandmarker(buf, "VIDEO");
+    const ni = await perception.createFaceLandmarker(buf, "IMAGE");
+    faceLmVideo?.close();
+    faceLmImage?.close();
+    faceLmVideo = nv;
+    faceLmImage = ni;
+    activeModelName = name;
+    setStatus(`模型已切换：${name}`);
   } catch (e) {
     setStatus(String(e.message || e));
+    els.modelSelect.value = activeModelName;
   } finally {
-    await refreshBackends();
+    els.modelSelect.disabled = false;
   }
 }
-
-/* ---------------- 版本切换（A 面部 / B 全身） ---------------- */
-function syncModeUI(next) {
-  mode = next;
-  document.querySelectorAll(".mode-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.mode === next)
-  );
-  const views = MODE_VIEWS[next];
-  document.querySelectorAll(".view-btn").forEach((b) => {
-    b.hidden = !views.includes(b.dataset.view);
-  });
-  const current = document.querySelector(".view-btn.active")?.dataset.view;
-  const view = views.includes(current) ? current : next === "b" ? "full" : "head";
-  document.querySelectorAll(".view-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.view === view)
-  );
-  if (avatar) avatar.setView(view);
-  readout.rebuild(MODE_GROUPS[next]);
-}
-
-async function setMode(next, { persist = true } = {}) {
-  if (!MODE_BACKENDS[next]) return;
-  syncModeUI(next);
-  expectedBackend = MODE_BACKENDS[next];
-  if (persist) localStorage.setItem("dash.mode", next);
-  try {
-    await api.switchBackend(MODE_BACKENDS[next]); // 版本切换 = 后端热切换
-    setStatus(next === "b" ? "全身版已就绪（面部+骨骼+手部）" : "面部版已就绪");
-  } catch (e) {
-    setStatus(String(e.message || e)); // 失败由周期对齐兜底重试
-  }
-  refreshBackends();
-}
-
-/* ---------------- 前后端对齐（服务重启 / 切换失败的自愈） ---------------- */
-setInterval(async () => {
-  try {
-    const h = await api.health();
-    if (h.activeBackend !== expectedBackend) {
-      await api.switchBackend(expectedBackend);
-      setStatus(`后端已对齐：${expectedBackend}`);
-      refreshBackends();
-    }
-  } catch {} // 后端离线时静默，下次再试
-}, 5000);
 
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
@@ -346,13 +290,10 @@ function bindEvents() {
   els.btnBrowse.addEventListener("click", () => els.fileInput.click());
   els.btnSecondary.addEventListener("click", () => els.fileInput.click());
   els.stopBtn.addEventListener("click", backToLanding);
-  els.backendSelect.addEventListener("change", onBackendChange);
+  els.modelSelect.addEventListener("change", onModelChange);
   els.meshToggle.addEventListener("change", () => {
     mesh.enabled = els.meshToggle.checked;
     if (!mesh.enabled) mesh.clear();
-  });
-  document.querySelectorAll(".mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setMode(btn.dataset.mode));
   });
   document.querySelectorAll(".view-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -375,7 +316,7 @@ function bindEvents() {
     });
   }
   els.sourceVideo.addEventListener("loadedmetadata", () => mesh.fitTo(els.sourceVideo));
-  els.sourceVideo.addEventListener("timeupdate", onVideoTime); // 只绑一次，state 守卫
+  els.sourceVideo.addEventListener("timeupdate", onVideoTime);
   els.sourceImage.addEventListener("load", () => mesh.fitTo(els.sourceImage));
   window.addEventListener("resize", () => mesh.fitTo(input.activeMedia()));
   els.overlayBtn.addEventListener("click", () => location.reload());
@@ -387,23 +328,15 @@ function routeFile(file) {
   else setStatus("这不是照片或视频文件");
 }
 
-/* ---------------- 周期任务：FPS、无人脸检测、零值心跳 ---------------- */
+/* ---------------- 周期任务：FPS 与无人脸检测 ---------------- */
 setInterval(() => {
   if (state !== "camera") return;
-  els.fps.textContent = `● ${(faceMsgCount / 2).toFixed(0)} FPS`;
-  faceMsgCount = 0;
-  // B 版本里「只有身体没有脸」也算无人脸
-  if (performance.now() - lastFacePresentAt > 800 && lastFaceMsgAt > 0) {
+  els.fps.textContent = `● ${(frameCount / 2).toFixed(0)} FPS`;
+  frameCount = 0;
+  if (performance.now() - lastFacePresentAt > 800 && lastFacePresentAt > 0) {
     els.nofaceBadge.hidden = false;
   }
 }, 2000);
-
-// 零值心跳：150ms 没收到人脸帧就以 0 推进时间轴（轨道不冻结）
-setInterval(() => {
-  if (state === "camera" && performance.now() - lastFaceMsgAt > 150) {
-    readout.update([]);
-  }
-}, 100);
 
 /* ---------------- 入场动效（§6.5：被钉上板的感觉） ---------------- */
 function entrance() {
@@ -427,27 +360,36 @@ function entrance() {
 async function boot() {
   bindEvents();
   entrance();
+  // A 版本只显示「面部」视角（B 版本二期开放后恢复三档）
+  document.querySelectorAll(".view-btn").forEach((b) => {
+    b.hidden = !MODE_VIEWS[mode].includes(b.dataset.view);
+  });
   try {
     avatar = new Avatar($("avatar-canvas"));
   } catch {
     showOverlay("这个浏览器不支持 WebGL，换 Chrome / Edge 试试", false);
     return;
   }
+  // 模型就绪：IndexedDB 有缓存则零网络，否则带进度下载
+  setStatus("正在准备模型…");
   try {
-    await api.health();
-  } catch {
-    showOverlay("后端没启动。先运行：python -m showcase.backend serve", true);
+    const { blob, fromCache } = await ensureModel("face_landmarker", (recv, total) => {
+      setStatus(`首次下载模型中… ${Math.round(recv / 1024)}KB / ${Math.round((total || 0) / 1024)}KB`);
+    });
+    const buf = await blobToBuffer(blob);
+    faceLmVideo = await perception.createFaceLandmarker(buf, "VIDEO");
+    faceLmImage = await perception.createFaceLandmarker(buf, "IMAGE");
+    setStatus(fromCache ? "待机（模型来自本地缓存）" : "待机（模型已更新）");
+  } catch (e) {
+    showOverlay(`模型没加载成功：${e.message || e}`, true);
     return;
   }
-  refreshBackends();
+  refreshModels();
   try {
     await avatar.load("assets/three-vrm-girl.vrm");
   } catch (e) {
     showOverlay(`皮套人模型没加载成功：${e.message || e}`, true);
   }
-  // 恢复上次版本（默认 A 面部版）与视角
-  const savedMode = localStorage.getItem("dash.mode");
-  await setMode(savedMode && MODE_BACKENDS[savedMode] ? savedMode : "a", { persist: false });
   const savedView = localStorage.getItem("dash.view");
   if (savedView && MODE_VIEWS[mode].includes(savedView)) {
     avatar.setView(savedView);

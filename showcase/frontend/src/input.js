@@ -1,19 +1,25 @@
-// 三种输入源的管理：camera(MJPEG) / photo / video，统一收敛到「源画面元素」
-import { cameraStreamUrl } from "./api.js";
+// 三种输入源的管理：camera(getUserMedia) / photo / video，统一收敛到「源画面元素」
+// 浏览器本地推理时代：camera 的采集与显示都在本地，不再经过服务器。
 
 export class SourceInput {
   constructor({ box, image, video }) {
     this.box = box;       // .source-box 容器
-    this.image = image;   // <img>（photo / MJPEG 共用）
-    this.video = video;   // <video>
+    this.image = image;   // <img>（photo）
+    this.video = video;   // <video>（camera / video 共用）
     this.mode = null;     // "camera" | "photo" | "video"
     this._objectUrl = null;
+    this._stream = null;
   }
 
   _resetMedia() {
     this.image.hidden = true;
     this.video.hidden = true;
     this.image.removeAttribute("src");
+    if (this._stream) {
+      for (const track of this._stream.getTracks()) track.stop(); // 释放摄像头
+      this._stream = null;
+    }
+    this.video.srcObject = null;
     this.video.removeAttribute("src");
     this.video.load();
     if (this._objectUrl) {
@@ -23,14 +29,22 @@ export class SourceInput {
     this.box.classList.remove("mirrored");
   }
 
-  // camera：MJPEG 进 <img>；onError 在流不可用时回调（如后端 --no-camera）
-  startCamera(onError) {
+  // camera：getUserMedia 本地采集（浏览器推理时代，画面不再过服务器）
+  async startCamera() {
     this._resetMedia();
     this.mode = "camera";
-    this.image.hidden = false;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: "user" },
+      audio: false,
+    });
+    this._stream = stream;
+    this.video.hidden = false;
+    this.video.muted = true;
+    this.video.autoplay = true;
+    this.video.playsInline = true;
+    this.video.srcObject = stream;
+    await this.video.play();
     this.box.classList.add("mirrored"); // 自拍镜像习惯
-    this.image.onerror = () => onError && onError(new Error("摄像头帧流不可用"));
-    this.image.src = cameraStreamUrl();
   }
 
   setPhoto(file) {
