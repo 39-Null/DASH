@@ -41,6 +41,7 @@ let camRunning = false;
 let lastFacePresentAt = 0;
 let frameCount = 0;
 let videoFrames = []; // video 模式：本地批处理的逐帧结果
+let ready = false;    // 推理引擎 + 模型就绪前，三个输入按钮全部拦截
 
 // 感知实例（boot 时创建；切模型时重建）
 let faceLmVideo = null;
@@ -151,6 +152,10 @@ function backToLanding() {
 
 /* ---------------- camera 模式（本地推理） ---------------- */
 async function startCamera() {
+  if (!ready) {
+    setStatus("推理引擎还在加载，稍候几秒再点…");
+    return;
+  }
   enterStage("camera");
   setStatus("正在打开摄像头…");
   try {
@@ -190,6 +195,10 @@ async function cameraLoop() {
 
 /* ---------------- photo 模式（本地推理） ---------------- */
 async function startPhoto(file) {
+  if (!ready) {
+    setStatus("推理引擎还在加载，稍候几秒再试…");
+    return;
+  }
   enterStage("photo");
   setStatus("分析照片中…（本地推理）");
   input.setPhoto(file);
@@ -209,6 +218,10 @@ async function startPhoto(file) {
 
 /* ---------------- video 模式（本地批处理 + 回放读数） ---------------- */
 async function startVideo(file) {
+  if (!ready) {
+    setStatus("推理引擎还在加载，稍候几秒再试…");
+    return;
+  }
   enterStage("video");
   input.setVideo(file);
   const video = els.sourceVideo;
@@ -371,7 +384,7 @@ async function boot() {
     return;
   }
   // 模型就绪：IndexedDB 有缓存则零网络，否则带进度下载
-  setStatus("正在准备模型…");
+  setStatus("首次加载推理引擎（wasm 约 13MB，仅第一次慢）…");
   try {
     const { blob, fromCache } = await ensureModel("face_landmarker", (recv, total) => {
       setStatus(`首次下载模型中… ${Math.round(recv / 1024)}KB / ${Math.round((total || 0) / 1024)}KB`);
@@ -379,6 +392,7 @@ async function boot() {
     const buf = await blobToBuffer(blob);
     faceLmVideo = await perception.createFaceLandmarker(buf, "VIDEO");
     faceLmImage = await perception.createFaceLandmarker(buf, "IMAGE");
+    ready = true;
     setStatus(fromCache ? "待机（模型来自本地缓存）" : "待机（模型已更新）");
   } catch (e) {
     showOverlay(`模型没加载成功：${e.message || e}`, true);
