@@ -1,12 +1,12 @@
 // 状态机与组装：landing / stage(camera|photo|video)
 // 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
-import { Avatar } from "./avatar.js?v=4";
-import { MeshOverlay } from "./mesh.js?v=4";
-import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=4";
-import { SourceInput } from "./input.js?v=4";
-import { poseMetrics, handMetrics } from "./metrics.js?v=4";
-import * as perception from "./perception.js?v=4";
-import { ensureModel, blobToBuffer } from "./modelstore.js?v=4";
+import { Avatar } from "./avatar.js?v=6";
+import { MeshOverlay } from "./mesh.js?v=6";
+import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=6";
+import { SourceInput } from "./input.js?v=6";
+import { poseMetrics, handMetrics } from "./metrics.js?v=6";
+import * as perception from "./perception.js?v=6";
+import { ensureModel, blobToBuffer } from "./modelstore.js?v=6";
 
 const $ = (id) => document.getElementById(id);
 const els = {
