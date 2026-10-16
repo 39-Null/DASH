@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DASH · 微表情皮套人</title>
-<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="styles.css?v=5">
 <script type="importmap">
 {"imports":{
   "three": "./vendor/three.module.js",
@@ -31,6 +31,18 @@
       <button id="stop-btn" class="btn btn-ghost" hidden>停止</button>
     </div>
   </header>
+
+  <!-- 移动端 hero（桌面隐藏；对应 Figma video-to-3d-mobile 的 hero-card） -->
+  <div class="hero-mobile paper-card">
+    <div class="hero-copy">
+      <h1>你的表情，实时长成一个 3D 角色</h1>
+      <p>打开摄像头，或丢入照片 / 视频，皮套人立刻模仿你的表情。</p>
+    </div>
+    <div class="hero-chips mono">
+      <span class="chip chip-blue">摄像头 · 照片 · 视频</span>
+      <span class="chip">本地推理 · 不上传</span>
+    </div>
+  </div>
 
   <main class="board">
 

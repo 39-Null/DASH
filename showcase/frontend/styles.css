@@ -532,3 +532,86 @@ a.link-card:hover { transform: rotate(0deg) translateY(-4px); }
   .board { gap: 20px; }
   .card-input, .card-output { padding: 22px 22px 16px; }
 }
+
+/* ---------- 移动端 hero（桌面隐藏） ---------- */
+.hero-mobile { display: none; }
+
+/* ---------- 竖屏/手机（≤820px）：单列堆叠，按 Figma mobile 稿 ---------- */
+@media (max-width: 820px) {
+  .desk { padding: 12px 16px 32px; }
+  .left-rail { display: none; }  /* 固定栏让位；隐私文案已在卡脚 */
+
+  /* 顶栏：紧凑横条（Figma status-bar） */
+  .statusbar {
+    max-width: none;
+    margin: 0 0 16px;
+    padding: 8px 12px;
+    border-radius: 8px;
+  }
+  .logo { font-size: 20px; white-space: nowrap; }
+  .version { display: none; }
+  .status-text, .fps { font-size: 10px; }
+  .status { gap: 8px; }
+  .cpu-icon { width: 14px; height: 14px; }
+
+  /* hero-card（Figma #14:14） */
+  .hero-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    border-radius: 20px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .hero-copy h1 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 28px;
+    line-height: 1.1;
+    color: var(--ink);
+  }
+  .hero-copy p {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  .hero-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: #FAF8ED;
+    border-radius: 999px;
+    padding: 8px 12px;
+  }
+  .chip-blue { background: var(--paper-blue); color: var(--accent-ink); }
+
+  /* 主版面单列 */
+  .board { grid-template-columns: 1fr; gap: 16px; max-width: none; }
+  .card-input, .card-output {
+    min-height: 0;
+    padding: 20px;
+    border-radius: 20px;   /* Figma mobile 统一 20px，不再用不对称大圆角 */
+  }
+  .card-title { font-size: 28px; margin-bottom: 12px; }
+  .dropzone { min-height: 220px; }
+  .source-box { min-height: 240px; }
+  .render-box { min-height: 320px; }
+  .dz-actions { flex-direction: column; width: 100%; }
+  .dz-actions .btn { width: 100%; }
+  .view-picker { flex-wrap: wrap; }
+  .card-foot { flex-wrap: wrap; }
+
+  /* 读数条行距压缩 */
+  .readout-row { grid-template-columns: 96px 1fr 48px; gap: 8px; }
+  .readout-name { font-size: 10px; }
+  .readout-value { font-size: 11px; }
+
+  /* 了解更多：卡片网格 */
+  .link-row { gap: 12px; }
+  .link-card { min-width: 0; flex: 1 1 150px; padding: 12px 14px; }
+
+  /* 装饰件缩小 */
+  .pushpin { width: 12px; height: 12px; }
+}
