@@ -1,0 +1,66 @@
+{
+  "task": "task6_mlp",
+  "date": "2026-10-21T15:46:42",
+  "data": "quant\\data\\pairs_s01.npz",
+  "samples": 5626,
+  "train_samples": 4500,
+  "val_samples": 1126,
+  "active_channels": 41,
+  "inactive_channels": 11,
+  "val_variance": 0.02355748601257801,
+  "mlp": {
+    "mse": 0.027150487527251244,
+    "mae": 0.08193666487932205,
+    "r2_overall": -0.15252017974853516,
+    "r2_mean_active": -0.16777057182498095,
+    "r2_median_active": -0.10876786708831787,
+    "r2_mean_well_posed": -0.15695512294769287,
+    "active_channels": 41,
+    "inactive_channels": 11,
+    "well_posed_channels": 33
+  },
+  "linear": {
+    "mse": 0.047338563948869705,
+    "mae": 0.10018637031316757,
+    "r2_overall": -1.009490728378296,
+    "r2_mean_active": -1.6237331425271384,
+    "r2_median_active": -0.7254848480224609,
+    "r2_mean_well_posed": -1.151556331099886,
+    "active_channels": 41,
+    "inactive_channels": 11,
+    "well_posed_channels": 33
+  },
+  "linear_alpha": 0.1,
+  "train": {
+    "best_epoch": 8,
+    "best_val_mse": 0.027150487527251244,
+    "epochs_run": 58
+  },
+  "onnx": {
+    "path": "quant\\models\\mlp_fp32_s01.onnx",
+    "input_names": [
+      "landmarks"
+    ],
+    "output_names": [
+      "blendshapes"
+    ],
+    "input_shape": [
+      "batch",
+      1434
+    ],
+    "output_shape": [
+      "batch",
+      52
+    ],
+    "max_abs_error": 8.940696716308594e-08,
+    "mean_abs_error": 6.3153660079251495e-09,
+    "latency": {
+      "mean_ms": 0.08910799631848931,
+      "p50_ms": 0.09839999256655574,
+      "p95_ms": 0.11211498058401048,
+      "min_ms": 0.05059997783973813
+    },
+    "size_bytes": 1798523
+  },
+  "elapsed_sec": 42.88010169996414
+}
