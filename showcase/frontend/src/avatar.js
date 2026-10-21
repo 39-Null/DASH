@@ -1,8 +1,8 @@
 // VRM 皮套人渲染（场景设置与映射表照搬自已验证的 viewer/index.html）
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { VRMLoaderPlugin } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=6";
+import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
+import { Rig } from "./rig.js?v=7";
 
 function bs(scoreMap, name) {
   return scoreMap.get(name) ?? 0;
@@ -16,6 +16,11 @@ export class Avatar {
     this.ready = false;
     this._headTarget = { x: 0, y: 0, z: 0 };
     this._headCur = { x: 0, y: 0, z: 0 };
+    this._lastCats = null;
+    this._lastHeadEuler = null;
+    // 性能埋点：渲染循环的真实耗时（benchmark 读取）
+    this.lastTiming = { rigMs: 0, renderMs: 0, totalMs: 0 };
+    this.renderedFrames = 0;
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -47,6 +52,7 @@ export class Avatar {
 
     const tick = (t) => {
       requestAnimationFrame(tick);
+      const t0 = performance.now();
       if (this.vrm) {
         // 头部跟随：指数平滑后应用欧拉角
         const k = 0.18;
@@ -59,6 +65,7 @@ export class Avatar {
         }
         this.vrm.update(t / 1000);
       }
+      const t1 = performance.now();
       // 每帧由轨道状态计算相机位姿（拖拽 / 滚轮 / 预设统一走这里）
       const o = this._orbit;
       const sp = Math.sin(o.phi);
@@ -69,6 +76,9 @@ export class Avatar {
       );
       this.camera.lookAt(o.target);
       renderer.render(scene, this.camera);
+      const t2 = performance.now();
+      this.lastTiming = { rigMs: t1 - t0, renderMs: t2 - t1, totalMs: t2 - t0 };
+      this.renderedFrames++;
     };
     requestAnimationFrame(tick);
   }
@@ -83,15 +93,40 @@ export class Avatar {
     this.camera.updateProjectionMatrix();
   }
 
+  // 直接按 URL 加载（manifest 不可用时的兜底）
   async load(url) {
+    const resp = await fetch(url, { cache: "no-cache" });
+    if (!resp.ok) throw new Error(`VRM 下载失败：HTTP ${resp.status}`);
+    return this.loadFromBlob(await resp.blob());
+  }
+
+  // 从 Blob 解析 VRM；新模型解析成功后才替换旧模型，失败时旧模型保持可用
+  async loadFromBlob(blob) {
+    const buffer = await blob.arrayBuffer();
     const loader = new GLTFLoader();
     loader.register((p) => new VRMLoaderPlugin(p));
-    const gltf = await loader.loadAsync(url);
-    this.vrm = gltf.userData.vrm;
-    this.vrm.scene.rotation.y = Math.PI; // 面向镜头
-    this.scene.add(this.vrm.scene);
-    this.rig = new Rig(this.vrm); // 骨骼驱动（Kalidokit）
+    const gltf = await loader.parseAsync(buffer, "");
+    const vrm = gltf.userData.vrm;
+    if (!vrm) throw new Error("不是有效的 VRM 文件");
+    VRMUtils.rotateVRM0(vrm); // VRM 0.x 面向镜头；VRM 1.0 保持原朝向
+
+    const old = this.vrm;
+    this.vrm = vrm;
+    this.scene.add(vrm.scene);
+    this.rig = new Rig(vrm);
     this.ready = true;
+    this._headTarget = { x: 0, y: 0, z: 0 };
+    this._headCur = { x: 0, y: 0, z: 0 };
+    if (this._lastCats) this.setBlendshapes(this._lastCats);
+    if (this._lastHeadEuler) this.setHeadEuler(this._lastHeadEuler);
+
+    if (old) {
+      this.scene.remove(old.scene);
+      try {
+        VRMUtils.deepDispose(old.scene);
+      } catch {}
+    }
+    return vrm;
   }
 
   // poseImage / poseWorld: flat 33×4；hands: {left, right} flat 21×3
@@ -159,7 +194,9 @@ export class Avatar {
 
   // cats: [{categoryName, score}]（后端契约原样）
   setBlendshapes(cats) {
-    if (!this.vrm || !cats) return;
+    if (!cats) return;
+    this._lastCats = cats;
+    if (!this.vrm) return;
     const E = this.vrm.expressionManager;
     if (!E) return;
     const m = new Map(cats.map((c) => [c.categoryName, c.score]));
@@ -188,6 +225,7 @@ export class Avatar {
   // headEuler: {x, y, z} 度（solvePnP 近似值，只做小角度跟随）
   setHeadEuler(headEuler) {
     if (!headEuler) return;
+    this._lastHeadEuler = headEuler;
     const rad = (d) => (d * Math.PI) / 180;
     const cap = (v) => Math.max(-0.5, Math.min(0.5, v));
     this._headTarget = {
@@ -213,6 +251,7 @@ export class Avatar {
     }
     this._headTarget = { x: 0, y: 0, z: 0 };
     this._headCur = { x: 0, y: 0, z: 0 };
+    this._lastHeadEuler = null;
   }
 }
 

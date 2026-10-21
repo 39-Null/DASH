@@ -1,12 +1,12 @@
 // 状态机与组装：landing / stage(camera|photo|video)
 // 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
-import { Avatar } from "./avatar.js?v=6";
-import { MeshOverlay } from "./mesh.js?v=6";
-import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=6";
-import { SourceInput } from "./input.js?v=6";
-import { poseMetrics, handMetrics } from "./metrics.js?v=6";
-import * as perception from "./perception.js?v=6";
-import { ensureModel, blobToBuffer } from "./modelstore.js?v=6";
+import { Avatar } from "./avatar.js?v=7";
+import { MeshOverlay } from "./mesh.js?v=7";
+import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=7";
+import { SourceInput } from "./input.js?v=7";
+import { poseMetrics, handMetrics } from "./metrics.js?v=7";
+import * as perception from "./perception.js?v=7";
+import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -26,6 +26,11 @@ const els = {
   nofaceBadge: $("noface-badge"),
   renderIdle: $("render-idle"),
   modelSelect: $("model-select"),
+  avatarSelect: $("avatar-select"),
+  avatarProgress: $("avatar-progress"),
+  avatarProgressText: $("avatar-progress-text"),
+  avatarProgressBar: $("avatar-progress-bar"),
+  avatarError: $("avatar-error"),
   meshToggle: $("mesh-toggle"),
   stripTitle: $("strip-title"),
   stripTag: $("strip-tag"),
@@ -48,6 +53,20 @@ let faceLmVideo = null;
 let faceLmImage = null;
 let activeModelName = "face_landmarker";
 
+// 皮套人：manifest 条目 + 懒加载（首次需要时才下载/解析）
+const FALLBACK_AVATAR = {
+  name: "vrm-girl",
+  kind: "avatar",
+  label: "少女（默认）",
+  url: "assets/three-vrm-girl.vrm",
+  version: "1.0.0",
+  default: true,
+};
+let avatarEntries = [];
+let activeAvatarName = FALLBACK_AVATAR.name;
+let loadedAvatarName = null;
+let avatarLoadingPromise = null;
+
 // 版本：A 面部（当前）；B 全身（二期，按钮置灰）
 const MODE_VIEWS = { a: ["head"], b: ["head", "half", "full"] };
 let mode = "a";
@@ -60,12 +79,132 @@ let avatar = null;
 /* ---------------- 工具 ---------------- */
 function setStatus(text) {
   els.statusText.textContent = text;
+  els.statusText.title = text;
 }
 
 function showOverlay(text, withRetry) {
   els.overlayText.textContent = text;
   els.overlayBtn.hidden = !withRetry;
   els.overlay.hidden = false;
+}
+
+/* ---------------- 皮套人：manifest 下拉 + 懒加载 + 进度 ---------------- */
+
+function entryLabel(entry) {
+  return entry.label || entry.name;
+}
+
+function setAvatarProgress(pct, text) {
+  if (!text) {
+    els.avatarProgress.hidden = true;
+    return;
+  }
+  els.avatarProgress.hidden = false;
+  els.avatarProgressText.textContent = text;
+  els.avatarProgressBar.classList.toggle("indeterminate", pct == null);
+  els.avatarProgressBar.style.transform = pct == null ? "" : `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`;
+}
+
+function setAvatarError(text) {
+  els.avatarError.textContent = text || "";
+  els.avatarError.hidden = !text;
+}
+
+// 拉 manifest，填充两个下拉；旧条目没有 kind 时按感知模型处理
+async function refreshModels() {
+  let manifest;
+  try {
+    manifest = await fetchManifest();
+  } catch {
+    manifest = { models: [FALLBACK_AVATAR] };
+    setAvatarError("manifest 读取失败，皮套人使用内置默认条目");
+  }
+
+  const perceptions = manifest.models.filter((m) => modelKind(m) === "perception");
+  els.modelSelect.innerHTML = "";
+  for (const m of perceptions) {
+    const opt = document.createElement("option");
+    opt.value = m.name;
+    opt.textContent = m.name === "face_landmarker" ? "mediapipe-task" : m.name;
+    opt.selected = m.name === activeModelName;
+    els.modelSelect.appendChild(opt);
+  }
+  if (!perceptions.length) els.modelSelect.innerHTML = "<option>manifest 读取失败</option>";
+  els.modelSelect.disabled = perceptions.length < 2;
+
+  avatarEntries = manifest.models.filter((m) => modelKind(m) === "avatar");
+  if (!avatarEntries.length) avatarEntries = [FALLBACK_AVATAR];
+  const saved = localStorage.getItem("dash.avatar");
+  const fallback = avatarEntries.find((e) => e.default) || avatarEntries[0];
+  activeAvatarName = avatarEntries.some((e) => e.name === saved) ? saved : fallback.name;
+
+  els.avatarSelect.innerHTML = "";
+  for (const entry of avatarEntries) {
+    const opt = document.createElement("option");
+    opt.value = entry.name;
+    opt.textContent = entryLabel(entry);
+    opt.selected = entry.name === activeAvatarName;
+    els.avatarSelect.appendChild(opt);
+  }
+  els.avatarSelect.disabled = avatarEntries.length < 2;
+}
+
+// 真正需要驱动/显示皮套人时再加载；并发调用共享同一个 Promise
+async function ensureAvatarLoaded() {
+  if (avatar && avatar.ready && loadedAvatarName === activeAvatarName) return true;
+  if (avatarLoadingPromise) return avatarLoadingPromise;
+
+  const entry = avatarEntries.find((e) => e.name === activeAvatarName) || FALLBACK_AVATAR;
+  els.avatarSelect.disabled = true;
+  avatarLoadingPromise = (async () => {
+    setAvatarError("");
+    try {
+      const { blob, fromCache } = await ensureEntry(entry, (recv, total) => {
+        const pct = total ? Math.round((recv / total) * 100) : null;
+        const size = `${(recv / 1048576).toFixed(1)}${total ? ` / ${(total / 1048576).toFixed(1)}` : ""} MB`;
+        const text = pct == null ? `下载皮套人 ${size}` : `下载皮套人 ${pct}% · ${size}`;
+        setAvatarProgress(pct, text);
+        setStatus(text);
+      });
+      setAvatarProgress(null, "解析皮套人模型…");
+      setStatus("解析皮套人模型…");
+      await avatar.loadFromBlob(blob);
+      loadedAvatarName = entry.name;
+      els.renderIdle.hidden = true;
+      setAvatarProgress(null, null);
+      setStatus(`皮套人就绪：${entryLabel(entry)}${fromCache ? "（本地缓存）" : ""}`);
+      return true;
+    } catch (e) {
+      const raw = String(e.message || e);
+      const msg = /Failed to fetch|NetworkError|Load failed/i.test(raw)
+        ? `网络错误，未能下载 ${entryLabel(entry)}`
+        : raw;
+      setAvatarProgress(null, null);
+      setAvatarError(`皮套人加载失败：${msg}（继续使用当前模型）`);
+      setStatus(`皮套人加载失败：${msg}`);
+      return false;
+    } finally {
+      avatarLoadingPromise = null;
+      els.avatarSelect.disabled = avatarEntries.length < 2;
+    }
+  })();
+  return avatarLoadingPromise;
+}
+
+async function onAvatarChange() {
+  const next = els.avatarSelect.value;
+  if (next === activeAvatarName && avatar.ready) return;
+  const prev = activeAvatarName;
+  activeAvatarName = next;
+  els.avatarSelect.disabled = true;
+  const ok = await ensureAvatarLoaded();
+  if (ok) {
+    localStorage.setItem("dash.avatar", next);
+  } else {
+    activeAvatarName = prev;
+    els.avatarSelect.value = prev;
+  }
+  els.avatarSelect.disabled = avatarEntries.length < 2;
 }
 
 function flatLandmarks(lm) {
@@ -143,7 +282,7 @@ function backToLanding() {
   els.stopBtn.hidden = true;
   els.btnSecondary.hidden = true;
   els.nofaceBadge.hidden = true;
-  els.renderIdle.hidden = false;
+  els.renderIdle.hidden = !!(avatar && avatar.ready);
   els.stripTitle.textContent = "了解更多";
   els.stripTag.textContent = "LEARN MORE";
   setStatus("待机");
@@ -156,6 +295,7 @@ async function startCamera() {
     setStatus("推理引擎还在加载，稍候几秒再点…");
     return;
   }
+  if (!(await ensureAvatarLoaded())) return;
   enterStage("camera");
   setStatus("正在打开摄像头…");
   try {
@@ -199,6 +339,7 @@ async function startPhoto(file) {
     setStatus("推理引擎还在加载，稍候几秒再试…");
     return;
   }
+  if (!(await ensureAvatarLoaded())) return;
   enterStage("photo");
   setStatus("分析照片中…（本地推理）");
   input.setPhoto(file);
@@ -222,6 +363,7 @@ async function startVideo(file) {
     setStatus("推理引擎还在加载，稍候几秒再试…");
     return;
   }
+  if (!(await ensureAvatarLoaded())) return;
   enterStage("video");
   input.setVideo(file);
   const video = els.sourceVideo;
@@ -255,24 +397,7 @@ function onVideoTime() {
   readout.renderPlayback(videoFrames, t); // 读数轴跟随视频进度（可回拖）
 }
 
-/* ---------------- 模型下拉（客户端切换；蒸馏 ONNX 二期加入） ---------------- */
-async function refreshModels() {
-  try {
-    const manifest = await (await fetch("models/manifest.json", { cache: "no-cache" })).json();
-    els.modelSelect.innerHTML = "";
-    for (const m of manifest.models) {
-      const opt = document.createElement("option");
-      opt.value = m.name;
-      opt.textContent = m.name === "face_landmarker" ? "mediapipe-task" : m.name;
-      opt.selected = m.name === activeModelName;
-      els.modelSelect.appendChild(opt);
-    }
-    els.modelSelect.disabled = els.modelSelect.options.length < 2;
-  } catch {
-    els.modelSelect.innerHTML = "<option>manifest 读取失败</option>";
-  }
-}
-
+/* ---------------- 感知模型下拉（客户端切换；蒸馏 ONNX 二期加入） ---------------- */
 async function onModelChange() {
   const name = els.modelSelect.value;
   if (name === activeModelName) return;
@@ -304,6 +429,7 @@ function bindEvents() {
   els.btnSecondary.addEventListener("click", () => els.fileInput.click());
   els.stopBtn.addEventListener("click", backToLanding);
   els.modelSelect.addEventListener("change", onModelChange);
+  els.avatarSelect.addEventListener("change", onAvatarChange);
   els.meshToggle.addEventListener("change", () => {
     mesh.enabled = els.meshToggle.checked;
     if (!mesh.enabled) mesh.clear();
@@ -385,10 +511,12 @@ async function boot() {
   }
   // 模型就绪：IndexedDB 有缓存则零网络，否则带进度下载
   setStatus("首次加载推理引擎（wasm 约 13MB，仅第一次慢）…");
+  let modelCacheHit = false;
   try {
     const { blob, fromCache } = await ensureModel("face_landmarker", (recv, total) => {
       setStatus(`首次下载模型中… ${Math.round(recv / 1024)}KB / ${Math.round((total || 0) / 1024)}KB`);
     });
+    modelCacheHit = fromCache;
     const buf = await blobToBuffer(blob);
     faceLmVideo = await perception.createFaceLandmarker(buf, "VIDEO");
     faceLmImage = await perception.createFaceLandmarker(buf, "IMAGE");
@@ -398,12 +526,8 @@ async function boot() {
     showOverlay(`模型没加载成功：${e.message || e}`, true);
     return;
   }
-  refreshModels();
-  try {
-    await avatar.load("assets/three-vrm-girl.vrm");
-  } catch (e) {
-    showOverlay(`皮套人模型没加载成功：${e.message || e}`, true);
-  }
+  await refreshModels();
+  setStatus(`待机（${modelCacheHit ? "模型来自本地缓存" : "模型已更新"} · 皮套人按需加载）`);
   const savedView = localStorage.getItem("dash.view");
   if (savedView && MODE_VIEWS[mode].includes(savedView)) {
     avatar.setView(savedView);

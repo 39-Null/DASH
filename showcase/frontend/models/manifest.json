@@ -2,10 +2,39 @@
   "models": [
     {
       "name": "face_landmarker",
+      "kind": "perception",
       "url": "models/face_landmarker.task",
       "version": "1.0.0",
       "sizeBytes": 3758596,
       "notes": "MediaPipe 官方 FaceLandmarker（478 关键点 + 52 BlendShape）"
+    },
+    {
+      "name": "vrm-girl",
+      "kind": "avatar",
+      "label": "少女（默认）",
+      "default": true,
+      "url": "assets/three-vrm-girl.vrm",
+      "version": "1.0.0",
+      "sizeBytes": 5558600,
+      "notes": "pixiv three-vrm sample；默认皮套人"
+    },
+    {
+      "name": "vrm-sample-a",
+      "kind": "avatar",
+      "label": "VRoid Sample A",
+      "url": "assets/vrm/sample-a.vrm",
+      "version": "1.0.0",
+      "sizeBytes": 15097732,
+      "notes": "VRoid Project AvatarSample_A；模型文件不入库，部署时需上传"
+    },
+    {
+      "name": "vrm-sample-b",
+      "kind": "avatar",
+      "label": "VRoid Sample B",
+      "url": "assets/vrm/sample-b.vrm",
+      "version": "1.0.0",
+      "sizeBytes": 13127716,
+      "notes": "VRoid Project AvatarSample_C；模型文件不入库，部署时需上传"
     }
   ]
 }
