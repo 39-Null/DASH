@@ -458,8 +458,19 @@ a.link-card:hover { transform: rotate(0deg) translateY(-4px); }
 .bench-controls input[type="number"] { width: 72px; }
 .bench-file { font-size: 11px; color: var(--muted); }
 .bench-sep { width: 1px; height: 18px; background: var(--paper-line); }
+.bench-privacy {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--accent-ink);
+  background: var(--paper-blue);
+  border: 1px solid #BFDBFE;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 0 0 10px;
+}
 .bench-hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
 .bench-hint[data-kind="err"] { color: #B91C1C; }
+.bench-hint[data-kind="warn"] { color: #B45309; }
 .bench-hint[data-kind="ok"] { color: #15803D; }
 .bench-live { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .bench-live-row {
@@ -502,8 +513,24 @@ a.link-card:hover { transform: rotate(0deg) translateY(-4px); }
 }
 .bench-verdict span { font-size: 11px; }
 .bench-verdict.pass { background: #F0FDF4; border-color: #86EFAC; color: #15803D; }
+.bench-verdict.warn { background: #FFFBEB; border-color: #FCD34D; color: #B45309; }
 .bench-verdict.fail { background: #FEF2F2; border-color: #FCA5A5; color: #B91C1C; }
 .bench-source { font-size: 11px; color: var(--muted); line-height: 1.6; }
+.bench-notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.bench-notes li {
+  border-left: 3px solid #FCD34D;
+  padding-left: 8px;
+  line-height: 1.6;
+}
 .bench-warn {
   font-size: 11px;
   color: #B45309;

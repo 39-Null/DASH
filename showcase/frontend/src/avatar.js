@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=7";
+import { Rig } from "./rig.js?v=8";
 
 function bs(scoreMap, name) {
   return scoreMap.get(name) ?? 0;

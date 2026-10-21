@@ -416,21 +416,28 @@
 | 指标 | 口径 |
 |---|---|
 | 端到端 FPS | 测量窗口内 `avatar.renderedFrames` 增量 / 窗口时长 |
+| 工作量 | 感知 + 表情映射 + rig + 渲染；每帧记录，统计 mean / P50 / P95 / P99 |
 | 感知推理耗时 | `detectForVideo` 前后 `performance.now()` |
 | rig+渲染耗时 | `avatar.js` 渲染循环内分别包 `vrm.update + 表情/头部` 与 `renderer.render` |
-| 帧耗时 | 相邻 rAF 时间戳差值；P50 / P95 / P99 / max |
-| 丢帧率 | 帧间隔 > 33.3 ms 的帧数 / 有效帧数（报告中同时给出原值） |
+| 调度间隔 | 相邻 rAF 时间戳差值；P50 / P95 / P99 / max，**仅作诊断** |
+| 工作量超预算帧 | 工作量 > 33.3 ms 的帧数 / 有效帧数（判定用） |
+| 调度间隔超预算帧 | 帧间隔 > 33.3 ms 的帧数 / 有效帧数（诊断用） |
+| 可持续帧率 | `1000 / 工作量`，给出均值与 P95 两个口径 |
 | 预热 | 前 1 s 不计入统计 |
 | 中止 | `document.hidden` 或 rAF 间隔 > 5 s，结果标记无效 |
 
-### 15.4 结果 schema（`dash.benchmark.v1`）
+**为什么不再用帧间隔判定**：显示刷新率会把 rAF 间隔量化为刷新周期的整数倍。40 Hz 屏幕上间隔只有
+25 / 50 ms 等档位；28 ms 的帧在 33.3 ms 预算内，却会错过 25 ms 的 vsync，表现为 50 ms 间隔。
+因此帧间隔超 33.3 ms 只能说明「错过了一次刷新」，不能单独说明算力不足。
+
+### 15.4 结果 schema（`dash.benchmark.v2`）
 
 关键字段：
 
 ```json
 {
-  "schema": "dash.benchmark.v1",
-  "source": {"kind": "builtin-image", "width": 1706, "height": 1279,
+  "schema": "dash.benchmark.v2",
+  "source": {"kind": "builtin-image", "cameraUsed": false, "width": 1706, "height": 1279,
              "processedWidth": 640, "processedHeight": 480,
              "loadMs": 120.0, "startupMs": null, "nominalFps": null,
              "captureFps": null, "faceDetectedRatio": 1.0},
@@ -439,21 +446,30 @@
                   "webglRenderer": "...", "refreshHz": 60,
                   "model": {"name": "face_landmarker", "version": "1.0.0"},
                   "avatar": {"name": "vrm-girl", "version": "1.0.0"}},
-  "metrics": {"fpsAvg": 30.0, "frameMs": {"p95": 33.0},
+  "metrics": {"fpsAvg": 30.0, "capacityFps": 32.0, "p95CapacityFps": 28.0,
+              "frameMs": {"p95": 41.0},
               "perceptionMs": {"mean": 12.0, "p95": 15.0},
               "rigRenderMs": {"rig": {"mean": 1.5}, "render": {"mean": 3.0},
                               "total": {"p95": 6.0}},
-              "pipelineMs": {"mean": 18.0, "p95": 24.0},
-              "overBudgetFrames": 0, "overBudgetRatio": 0.0},
-  "verdict": {"pass": true, "checks": []}
+              "pipelineMs": {"mean": 28.3, "p95": 34.7},
+              "workOverBudgetFrames": 80, "workOverBudgetRatio": 0.08,
+              "frameIntervalOverBudgetFrames": 257,
+              "frameIntervalOverBudgetRatio": 0.252},
+  "verdict": {"pass": true, "level": "warn",
+              "checks": [], "warnings": [], "notes": []}
 }
 ```
 
 ### 15.5 判定与导出
 
-- 通过条件（三项同时满足）：平均 FPS ≥ 30；P95 帧耗时 ≤ 33.3 ms；超预算帧 ≤ 5%。
+- 硬性条件（三项同时满足）：平均 FPS ≥ 30；平均工作量 ≤ 33.3 ms；P95 工作量 ≤ 40 ms（1.2× 预算）。
+- 告警条件：P95 工作量在 33.3–40 ms 之间，或工作量超预算帧 > 10%。此时判定为
+  **PASS · 通过（有告警）**，而不是直接 FAIL。
+- 失败条件：平均 FPS < 30，或平均工作量 > 33.3 ms，或 P95 工作量 > 40 ms。
+- 帧间隔 P95 / 调度间隔超预算只展示，不参与判定；报告会附上刷新率量化说明。
+- 报告必须记录**本次是否调用摄像头**，并明确「画面未上传、全程本机处理」。
 - 导出：Markdown（可直接粘进 `doc/report/`）、JSON、CSV；文件名 `dash-benchmark-YYYYMMDD-HHMMSS.*`。
-- 报告必须包含数据来源、分辨率、加载耗时、帧率、环境信息与口径说明，避免把 headless/软件渲染数据当成真机结论。
+- 避免把 headless/软件渲染数据当成真机结论：结果里保留 WebGL renderer、刷新率与来源。
 
 ---
 

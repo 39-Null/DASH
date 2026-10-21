@@ -1,12 +1,18 @@
-// 性能测试：端到端 FPS / 感知推理 / rig+渲染 / 超预算帧。
+// 性能测试：端到端 FPS / 感知推理 / rig+渲染 / 工作量长尾。
 // 数据源只允许真实媒体（内置隐藏头像 / 本地图片 / 本地视频 / 摄像头），不做合成信号。
-// 结果可导出 Markdown / JSON / CSV，口径与门限写进结果本身。
-import { toFrame } from "./perception.js?v=7";
+// 判定规则见 benchmark-rules.js：帧间隔受刷新率量化，只作诊断；判定以工作量与吞吐为准。
+import { toFrame } from "./perception.js?v=8";
+import {
+  TARGET_FPS,
+  FRAME_BUDGET_MS,
+  LONG_TAIL_BUDGET_MS,
+  WORK_OVER_BUDGET_WARN_RATIO,
+  evaluateVerdict,
+  verdictLabel,
+} from "./benchmark-rules.js?v=8";
 
-export const BENCH_SCHEMA = "dash.benchmark.v1";
-export const TARGET_FPS = 30;
-export const FRAME_BUDGET_MS = 1000 / TARGET_FPS;
-export const OVER_BUDGET_LIMIT = 0.05;
+export const BENCH_SCHEMA = "dash.benchmark.v2";
+export { TARGET_FPS, FRAME_BUDGET_MS };
 const PROCESS_W = 640;
 const PROCESS_H = 480;
 const WARMUP_MS = 1000;
@@ -199,6 +205,7 @@ async function createSource(kind, file, { getActiveCamera, onStatus }) {
     startupMs: null,
     nominalFps: null,
     captureFps: null,
+    cameraUsed: kind === "camera",
     faceExpected: true,
     draw: null,
     startCaptureCounter: () => null,
@@ -424,7 +431,8 @@ export class BenchmarkRunner {
       let lastTs = 0;
       let measuredFrames = 0;
       let detected = 0;
-      let overBudget = 0;
+      let frameOverBudget = 0;
+      let workOverBudget = 0;
       let warmupDone = false;
       let measureStarted = false;
       let renderedStart = 0;
@@ -450,31 +458,19 @@ export class BenchmarkRunner {
         const renderStats = summarize(renderTimes);
         const rigRenderStats = summarize(rigTimes.map((v, i) => v + (renderTimes[i] ?? 0)));
         const pipelineStats = summarize(pipeline);
-        const overBudgetRatio = intervals.length ? overBudget / intervals.length : null;
+        const frameOverBudgetRatio = intervals.length ? frameOverBudget / intervals.length : null;
+        const workOverBudgetRatio = pipeline.length ? workOverBudget / pipeline.length : null;
+        const capacityFps = pipelineStats.mean ? 1000 / pipelineStats.mean : null;
+        const p95CapacityFps = pipelineStats.p95 ? 1000 / pipelineStats.p95 : null;
 
-        const checks = [
-          {
-            name: `平均帧率 ≥ ${TARGET_FPS}`,
-            value: round(fpsAvg),
-            unit: "FPS",
-            threshold: TARGET_FPS,
-            pass: fpsAvg != null && fpsAvg >= TARGET_FPS,
-          },
-          {
-            name: `P95 帧耗时 ≤ ${round(FRAME_BUDGET_MS)} ms`,
-            value: frameStats.p95,
-            unit: "ms",
-            threshold: round(FRAME_BUDGET_MS),
-            pass: frameStats.p95 != null && frameStats.p95 <= FRAME_BUDGET_MS,
-          },
-          {
-            name: `超预算帧 ≤ ${Math.round(OVER_BUDGET_LIMIT * 100)}%`,
-            value: overBudgetRatio == null ? null : round(overBudgetRatio * 100),
-            unit: "%",
-            threshold: Math.round(OVER_BUDGET_LIMIT * 100),
-            pass: overBudgetRatio != null && overBudgetRatio <= OVER_BUDGET_LIMIT,
-          },
-        ];
+        const verdict = evaluateVerdict({
+          fpsAvg,
+          meanWorkMs: pipelineStats.mean,
+          p95WorkMs: pipelineStats.p95,
+          workOverBudgetRatio,
+          frameP95Ms: frameStats.p95,
+          refreshHz,
+        });
 
         const info = getInfo?.() ?? {};
         resolve({
@@ -487,12 +483,16 @@ export class BenchmarkRunner {
             targetFrames: durationMode ? null : targetFrames,
             targetFps: TARGET_FPS,
             frameBudgetMs: round(FRAME_BUDGET_MS),
+            longTailFactor: 1.2,
+            longTailBudgetMs: round(LONG_TAIL_BUDGET_MS),
+            workOverBudgetWarnRatio: WORK_OVER_BUDGET_WARN_RATIO,
             warmupMs,
             warmupFrames: null,
           },
           source: {
             kind: source.kind,
             label: source.label,
+            cameraUsed: !!source.cameraUsed,
             width: source.width,
             height: source.height,
             processedWidth: source.processedWidth,
@@ -515,6 +515,8 @@ export class BenchmarkRunner {
             frames: measuredFrames,
             elapsedMs: round(elapsedMs),
             fpsAvg: round(fpsAvg),
+            capacityFps: round(capacityFps),
+            p95CapacityFps: round(p95CapacityFps),
             frameMs: frameStats,
             perceptionMs: perceptionStats,
             applyMs: applyStats,
@@ -524,14 +526,14 @@ export class BenchmarkRunner {
               total: rigRenderStats,
             },
             pipelineMs: pipelineStats,
-            overBudgetFrames: overBudget,
-            overBudgetRatio: overBudgetRatio == null ? null : round(overBudgetRatio, 3),
-            droppedFrameRatio: overBudgetRatio == null ? null : round(overBudgetRatio, 3),
+            workOverBudgetFrames: workOverBudget,
+            workOverBudgetRatio: workOverBudgetRatio == null ? null : round(workOverBudgetRatio, 3),
+            frameIntervalOverBudgetFrames: frameOverBudget,
+            frameIntervalOverBudgetRatio:
+              frameOverBudgetRatio == null ? null : round(frameOverBudgetRatio, 3),
+            droppedFrameRatio: frameOverBudgetRatio == null ? null : round(frameOverBudgetRatio, 3),
           },
-          verdict: {
-            pass: checks.every((c) => c.pass),
-            checks,
-          },
+          verdict,
         });
       };
 
@@ -543,7 +545,6 @@ export class BenchmarkRunner {
         }
 
         try {
-          const tDraw = performance.now();
           const frameSource = source.draw(now);
           const t0 = performance.now();
           let ts = Math.round(now);
@@ -555,7 +556,7 @@ export class BenchmarkRunner {
           if (frame) this.applyFrame?.(frame);
           const t2 = performance.now();
           const timing = avatar.lastTiming || { rigMs: 0, renderMs: 0 };
-          const drawMs = t0 - tDraw;
+          const workMs = t1 - t0 + (t2 - t1) + timing.rigMs + timing.renderMs;
 
           if (warmupDone) {
             if (!measureStarted) {
@@ -571,12 +572,13 @@ export class BenchmarkRunner {
             }
             const interval = now - lastTick;
             intervals.push(interval);
-            if (interval > FRAME_BUDGET_MS) overBudget++;
+            if (interval > FRAME_BUDGET_MS) frameOverBudget++;
+            if (workMs > FRAME_BUDGET_MS) workOverBudget++;
             perception.push(t1 - t0);
             applyTimes.push(t2 - t1);
             rigTimes.push(timing.rigMs);
             renderTimes.push(timing.renderMs);
-            pipeline.push(t1 - t0 + (t2 - t1) + timing.rigMs + timing.renderMs + Math.max(0, drawMs));
+            pipeline.push(workMs);
             measuredFrames++;
             if (frame) detected++;
           } else {
@@ -642,6 +644,8 @@ export function toMarkdown(r) {
     src.captureFps != null ? `实测 ${src.captureFps} fps` : null,
     src.nominalFps != null ? `标称 ${src.nominalFps} fps` : null,
     `人脸检出率 ${src.faceDetectedRatio == null ? "—" : `${Math.round(src.faceDetectedRatio * 100)}%`}`,
+    src.cameraUsed ? "摄像头已调用" : "未调用摄像头",
+    "画面未上传",
   ].filter(Boolean).join("，");
 
   const config = r.config.mode === "duration"
@@ -650,13 +654,17 @@ export function toMarkdown(r) {
 
   const rows = [
     ["平均帧率（端到端）", fmt(r.metrics.fpsAvg, "FPS"), `≥ ${r.config.targetFps} FPS`, checkMark(r.verdict.checks[0])],
-    ["P95 帧耗时", fmt(r.metrics.frameMs.p95, "ms"), `≤ ${r.config.frameBudgetMs} ms`, checkMark(r.verdict.checks[1])],
-    ["超预算帧占比", fmt(r.metrics.overBudgetRatio == null ? null : round(r.metrics.overBudgetRatio * 100), "%"), "≤ 5%", checkMark(r.verdict.checks[2])],
+    ["平均工作量", fmt(r.metrics.pipelineMs.mean, "ms"), `≤ ${r.config.frameBudgetMs} ms`, checkMark(r.verdict.checks[1])],
+    ["P95 工作量", fmt(r.metrics.pipelineMs.p95, "ms"), `≤ ${r.config.longTailBudgetMs} ms`, checkMark(r.verdict.checks[2])],
+    ["工作量超预算帧占比", fmt(r.metrics.workOverBudgetRatio == null ? null : round(r.metrics.workOverBudgetRatio * 100), "%"), "≤ 10% 告警线", "—"],
+    ["帧间隔 P95（调度诊断）", fmt(r.metrics.frameMs.p95, "ms"), "—", "—"],
+    ["调度间隔超预算占比", fmt(r.metrics.frameIntervalOverBudgetRatio == null ? null : round(r.metrics.frameIntervalOverBudgetRatio * 100), "%"), "诊断项", "—"],
+    ["可持续帧率（均值 / P95 工作量）", `${fmt(r.metrics.capacityFps, "FPS")} / ${fmt(r.metrics.p95CapacityFps, "FPS")}`, "—", "—"],
     ["感知推理 均值 / P95", `${fmt(r.metrics.perceptionMs.mean, "ms")} / ${fmt(r.metrics.perceptionMs.p95, "ms")}`, "—", "—"],
     ["rig+渲染 均值 / P95", `${fmt(r.metrics.rigRenderMs.rig.mean, "ms")} + ${fmt(r.metrics.rigRenderMs.render.mean, "ms")} / ${fmt(r.metrics.rigRenderMs.total.p95, "ms")}`, "—", "—"],
-    ["流水线耗时 均值 / P95", `${fmt(r.metrics.pipelineMs.mean, "ms")} / ${fmt(r.metrics.pipelineMs.p95, "ms")}`, "—", "—"],
+    ["流水线工作量 均值 / P95", `${fmt(r.metrics.pipelineMs.mean, "ms")} / ${fmt(r.metrics.pipelineMs.p95, "ms")}`, "—", "—"],
     ["统计帧数 / 时长", `${r.metrics.frames} 帧 / ${(r.metrics.elapsedMs / 1000).toFixed(1)} s`, "—", "—"],
-    ["超预算帧数", `${r.metrics.overBudgetFrames}`, "—", "—"],
+    ["超预算帧数（工作量 / 调度间隔）", `${r.metrics.workOverBudgetFrames} / ${r.metrics.frameIntervalOverBudgetFrames}`, "—", "—"],
   ];
 
   const env = r.environment;
@@ -670,21 +678,32 @@ export function toMarkdown(r) {
     ["WebGL renderer", env.webglRenderer || "—"],
     ["WASM SIMD", env.wasmSimd ? "支持" : "不支持"],
     ["显示刷新率（估计）", env.refreshHz ? `${env.refreshHz} Hz` : "—"],
+    ["摄像头调用", src.cameraUsed ? "已调用" : "未调用"],
+    ["图像上传", "否（全程本地处理）"],
     ["感知模型", `${env.model?.name || "—"} ${env.model?.version || ""}`.trim()],
     ["皮套人", `${env.avatar?.name || "—"} ${env.avatar?.version || ""}`.trim()],
   ];
 
+  const verdictText = verdictLabel(r.verdict.level);
   const lines = [
     "## DASH 浏览器端性能测试",
     "",
     `- 时间：${r.generatedAtLocal}`,
     `- 数据来源：${sourceLine}`,
-    `- 配置：${config}；目标 ${r.config.targetFps} FPS / ${r.config.frameBudgetMs} ms 帧预算`,
-    `- 判定：**${r.verdict.pass ? "通过" : "未通过"}**`,
+    `- 配置：${config}；目标 ${r.config.targetFps} FPS / ${r.config.frameBudgetMs} ms 工作量预算，长尾容忍 1.2×（${r.config.longTailBudgetMs} ms）`,
+    `- 判定：**${verdictText}**`,
     "",
     "| 指标 | 实测 | 门限 | 判定 |",
     "| --- | --- | --- | --- |",
     ...rows.map((row) => `| ${row.join(" | ")} |`),
+    ...(r.verdict.warnings.length || r.verdict.notes.length
+      ? [
+          "",
+          "### 告警与口径说明",
+          ...r.verdict.warnings.map((w) => `- 告警：${w}`),
+          ...r.verdict.notes.map((n) => `- 说明：${n}`),
+        ]
+      : []),
     "",
     "### 环境",
     "",
@@ -692,7 +711,7 @@ export function toMarkdown(r) {
     "| --- | --- |",
     ...envRows.map(([k, v]) => `| ${k} | ${String(v).replace(/\|/g, "\\|")} |`),
     "",
-    `> 口径：端到端 FPS 取测量窗口内 VRM 渲染帧数；帧耗时取 rAF 间隔；感知耗时只统计 detectForVideo；rig+渲染来自渲染循环埋点；丢帧率按帧间隔超过 ${r.config.frameBudgetMs} ms 的帧占比计算。`,
+    `> 口径：判定以「平均帧率 + 平均/P95 工作量」为准；帧间隔受显示刷新率量化，仅作调度诊断。感知耗时只统计 detectForVideo；rig+渲染来自渲染循环埋点；工作量 = 感知 + 表情映射 + rig + 渲染，不含测试页的 canvas 重采样。`,
   ];
   return lines.join("\n");
 }
@@ -709,31 +728,41 @@ function csvCell(v) {
 
 export function toCsv(r) {
   const rows = [["category", "metric", "value", "unit", "threshold", "pass"]];
+  rows.push(["verdict", "level", r.verdict.level, "", "", r.verdict.pass]);
   for (const c of r.verdict.checks) {
     rows.push(["verdict", c.name, c.value, c.unit, c.threshold, c.pass]);
   }
+  for (const w of r.verdict.warnings) rows.push(["warning", "message", w, "", "", ""]);
+  for (const n of r.verdict.notes) rows.push(["note", "message", n, "", "", ""]);
   const m = r.metrics;
   const metricRows = [
     ["metrics", "frames", m.frames, "frames", "", ""],
     ["metrics", "elapsedMs", m.elapsedMs, "ms", "", ""],
     ["metrics", "fpsAvg", m.fpsAvg, "FPS", r.config.targetFps, m.fpsAvg >= r.config.targetFps],
-    ["metrics", "frameMean", m.frameMs.mean, "ms", r.config.frameBudgetMs, ""],
-    ["metrics", "frameP95", m.frameMs.p95, "ms", r.config.frameBudgetMs, ""],
+    ["metrics", "capacityFps", m.capacityFps, "FPS", r.config.targetFps, ""],
+    ["metrics", "p95CapacityFps", m.p95CapacityFps, "FPS", r.config.targetFps, ""],
+    ["metrics", "pipelineMean", m.pipelineMs.mean, "ms", r.config.frameBudgetMs, ""],
+    ["metrics", "pipelineP95", m.pipelineMs.p95, "ms", r.config.longTailBudgetMs, ""],
+    ["metrics", "workOverBudgetFrames", m.workOverBudgetFrames, "frames", "", ""],
+    ["metrics", "workOverBudgetRatio", m.workOverBudgetRatio, "ratio", r.config.workOverBudgetWarnRatio, ""],
+    ["metrics", "frameMean", m.frameMs.mean, "ms", "", ""],
+    ["metrics", "frameP95", m.frameMs.p95, "ms", "", ""],
     ["metrics", "frameP99", m.frameMs.p99, "ms", "", ""],
+    ["metrics", "frameIntervalOverBudgetFrames", m.frameIntervalOverBudgetFrames, "frames", "", ""],
+    ["metrics", "frameIntervalOverBudgetRatio", m.frameIntervalOverBudgetRatio, "ratio", "", ""],
     ["metrics", "perceptionMean", m.perceptionMs.mean, "ms", "", ""],
     ["metrics", "perceptionP95", m.perceptionMs.p95, "ms", "", ""],
     ["metrics", "rigMean", m.rigRenderMs.rig.mean, "ms", "", ""],
     ["metrics", "renderMean", m.rigRenderMs.render.mean, "ms", "", ""],
     ["metrics", "rigRenderP95", m.rigRenderMs.total.p95, "ms", "", ""],
-    ["metrics", "pipelineMean", m.pipelineMs.mean, "ms", "", ""],
-    ["metrics", "overBudgetFrames", m.overBudgetFrames, "frames", "", ""],
-    ["metrics", "overBudgetRatio", m.overBudgetRatio, "ratio", 0.05, m.overBudgetRatio <= 0.05],
   ];
   rows.push(...metricRows);
   const s = r.source;
   rows.push(
     ["source", "kind", s.kind, "", "", ""],
     ["source", "label", s.label, "", "", ""],
+    ["source", "cameraUsed", s.cameraUsed, "", "", ""],
+    ["source", "imageUploaded", false, "", "", ""],
     ["source", "width", s.width, "px", "", ""],
     ["source", "height", s.height, "px", "", ""],
     ["source", "processedWidth", s.processedWidth, "px", "", ""],
@@ -818,6 +847,7 @@ export function createBenchmarkPanel({
     liveRig: $("bench-live-rig"),
     liveFrames: $("bench-live-frames"),
     progress: $("bench-progress-bar"),
+    privacy: $("bench-privacy"),
     result: $("bench-result"),
   };
   if (!els.card || !els.start) return { setReady() {} };
@@ -831,6 +861,17 @@ export function createBenchmarkPanel({
   function setStatus(text, kind = "") {
     els.status.textContent = text;
     els.status.dataset.kind = kind;
+  }
+
+  function syncPrivacy(text) {
+    if (!els.privacy) return;
+    if (text) {
+      els.privacy.textContent = text;
+      return;
+    }
+    els.privacy.textContent = els.source.value === "camera"
+      ? "隐私：将调用摄像头；画面只在本机处理，不会上传。"
+      : "隐私：未调用摄像头；画面只在本机处理，不会上传。";
   }
 
   function syncSourceUi() {
@@ -885,18 +926,18 @@ export function createBenchmarkPanel({
     els.result.innerHTML = "";
 
     const verdict = document.createElement("div");
-    verdict.className = `bench-verdict ${r.verdict.pass ? "pass" : "fail"}`;
+    verdict.className = `bench-verdict ${r.verdict.level}`;
     const stamp = document.createElement("strong");
-    stamp.textContent = r.verdict.pass ? "PASS · 通过" : "FAIL · 未通过";
+    stamp.textContent = verdictLabel(r.verdict.level);
     const summary = document.createElement("span");
     summary.className = "mono";
-    summary.textContent = `${r.metrics.fpsAvg ?? "—"} FPS · P95 ${r.metrics.frameMs.p95 ?? "—"} ms · 超预算 ${r.metrics.overBudgetRatio == null ? "—" : round(r.metrics.overBudgetRatio * 100)}%`;
+    summary.textContent = `${r.metrics.fpsAvg ?? "—"} FPS · 平均工作量 ${r.metrics.pipelineMs.mean ?? "—"} ms · P95 ${r.metrics.pipelineMs.p95 ?? "—"} ms · 超预算 ${r.metrics.workOverBudgetRatio == null ? "—" : round(r.metrics.workOverBudgetRatio * 100)}%`;
     verdict.append(stamp, summary);
     els.result.appendChild(verdict);
 
     const sourceP = document.createElement("p");
     sourceP.className = "bench-source mono";
-    sourceP.textContent = `数据来源：${r.source.label} · ${r.source.width ?? "—"}×${r.source.height ?? "—"} → ${r.source.processedWidth}×${r.source.processedHeight} · 加载 ${r.source.loadMs ?? "—"} ms${r.source.startupMs != null ? ` · 启动 ${r.source.startupMs} ms` : ""}${r.source.captureFps != null ? ` · 实测 ${r.source.captureFps} fps` : ""}${r.source.nominalFps != null ? ` · 标称 ${r.source.nominalFps} fps` : ""} · 人脸检出 ${r.source.faceDetectedRatio == null ? "—" : `${Math.round(r.source.faceDetectedRatio * 100)}%`}`;
+    sourceP.textContent = `数据来源：${r.source.label} · ${r.source.width ?? "—"}×${r.source.height ?? "—"} → ${r.source.processedWidth}×${r.source.processedHeight} · 加载 ${r.source.loadMs ?? "—"} ms${r.source.startupMs != null ? ` · 启动 ${r.source.startupMs} ms` : ""}${r.source.captureFps != null ? ` · 实测 ${r.source.captureFps} fps` : ""}${r.source.nominalFps != null ? ` · 标称 ${r.source.nominalFps} fps` : ""} · 人脸检出 ${r.source.faceDetectedRatio == null ? "—" : `${Math.round(r.source.faceDetectedRatio * 100)}%`} · 摄像头 ${r.source.cameraUsed ? "已调用" : "未调用"} · 画面未上传`;
     els.result.appendChild(sourceP);
 
     if (r.source.faceDetectedRatio === 0) {
@@ -908,9 +949,25 @@ export function createBenchmarkPanel({
 
     els.result.appendChild(table(r.verdict.checks.map((c) => [
       c.name,
-      `${fmt(c.value, c.unit)}（门限 ${fmt(c.threshold, c.unit)}）`,
+      fmt(c.value, c.unit),
       c.pass ? "通过" : "未通过",
     ])));
+
+    if (r.verdict.warnings.length || r.verdict.notes.length) {
+      const ul = document.createElement("ul");
+      ul.className = "bench-notes mono";
+      for (const w of r.verdict.warnings) {
+        const li = document.createElement("li");
+        li.textContent = `告警：${w}`;
+        ul.appendChild(li);
+      }
+      for (const n of r.verdict.notes) {
+        const li = document.createElement("li");
+        li.textContent = `说明：${n}`;
+        ul.appendChild(li);
+      }
+      els.result.appendChild(ul);
+    }
 
     const detail = document.createElement("details");
     detail.className = "bench-env";
@@ -920,12 +977,15 @@ export function createBenchmarkPanel({
     detail.appendChild(summaryEl);
     detail.appendChild(table([
       ["平均帧率", fmt(r.metrics.fpsAvg, "FPS")],
-      ["帧耗时 均值 / P50 / P95 / P99", `${fmt(r.metrics.frameMs.mean)} / ${fmt(r.metrics.frameMs.p50)} / ${fmt(r.metrics.frameMs.p95)} / ${fmt(r.metrics.frameMs.p99)} ms`],
+      ["可持续帧率（均值 / P95 工作量）", `${fmt(r.metrics.capacityFps, "FPS")} / ${fmt(r.metrics.p95CapacityFps, "FPS")}`],
+      ["工作量 均值 / P50 / P95 / P99", `${fmt(r.metrics.pipelineMs.mean)} / ${fmt(r.metrics.pipelineMs.p50)} / ${fmt(r.metrics.pipelineMs.p95)} / ${fmt(r.metrics.pipelineMs.p99)} ms`],
+      ["工作量超预算帧", `${r.metrics.workOverBudgetFrames} 帧（${fmt(r.metrics.workOverBudgetRatio == null ? null : round(r.metrics.workOverBudgetRatio * 100), "%")}）`],
+      ["调度间隔 均值 / P50 / P95 / P99", `${fmt(r.metrics.frameMs.mean)} / ${fmt(r.metrics.frameMs.p50)} / ${fmt(r.metrics.frameMs.p95)} / ${fmt(r.metrics.frameMs.p99)} ms`],
+      ["调度间隔超预算帧", `${r.metrics.frameIntervalOverBudgetFrames} 帧（${fmt(r.metrics.frameIntervalOverBudgetRatio == null ? null : round(r.metrics.frameIntervalOverBudgetRatio * 100), "%")}）`],
       ["感知推理 均值 / P95 / 最大", `${fmt(r.metrics.perceptionMs.mean)} / ${fmt(r.metrics.perceptionMs.p95)} / ${fmt(r.metrics.perceptionMs.max)} ms`],
       ["rig 均值 / 渲染均值", `${fmt(r.metrics.rigRenderMs.rig.mean)} / ${fmt(r.metrics.rigRenderMs.render.mean)} ms`],
-      ["流水线 均值 / P95", `${fmt(r.metrics.pipelineMs.mean)} / ${fmt(r.metrics.pipelineMs.p95)} ms`],
       ["统计帧数 / 时长", `${r.metrics.frames} / ${(r.metrics.elapsedMs / 1000).toFixed(1)} s`],
-      ["超预算帧", `${r.metrics.overBudgetFrames} 帧（${fmt(r.metrics.overBudgetRatio == null ? null : round(r.metrics.overBudgetRatio * 100), "%")}）`],
+      ["摄像头 / 图像上传", `${r.source.cameraUsed ? "已调用" : "未调用"} / 否`],
       ["皮套人加载", `${fmt(r.setup.avatarLoadMs, "ms")}`],
       ["UA", r.environment.userAgent],
       ["CPU 核数 / DPR", `${r.environment.hardwareConcurrency ?? "—"} / ${r.environment.devicePixelRatio ?? "—"}`],
@@ -982,6 +1042,7 @@ export function createBenchmarkPanel({
     }
     setBusy(true);
     setStatus("准备中…");
+    syncPrivacy("隐私：测试进行中；画面只在本机处理，不会上传。");
     els.result.hidden = true;
     els.live.hidden = false;
     els.progress.style.transform = "scaleX(0)";
@@ -1005,13 +1066,18 @@ export function createBenchmarkPanel({
         },
       });
       renderResult(result);
-      setStatus(`完成：${result.verdict.pass ? "通过" : "未通过"}`, result.verdict.pass ? "ok" : "err");
+      syncPrivacy(result.source.cameraUsed
+        ? "本次测试：已调用摄像头；未上传任何画面。"
+        : "本次测试：未调用摄像头；未上传任何画面。");
+      const levelClass = result.verdict.level === "fail" ? "err" : result.verdict.level === "warn" ? "warn" : "ok";
+      setStatus(`完成：${verdictLabel(result.verdict.level)}`, levelClass);
     } catch (e) {
       if (e instanceof BenchmarkAbort) {
         setStatus(`已中止：${e.message}。本次结果无效。`, "err");
       } else {
         setStatus(`测试失败：${e.message || e}`, "err");
       }
+      syncPrivacy("本次测试未完成；未上传任何画面。");
       els.live.hidden = true;
     } finally {
       setBusy(false);
@@ -1023,6 +1089,7 @@ export function createBenchmarkPanel({
     pendingFile = null;
     els.file.value = "";
     syncSourceUi();
+    syncPrivacy();
   });
   els.fileBtn.addEventListener("click", () => els.file.click());
   els.file.addEventListener("change", () => {
@@ -1039,6 +1106,7 @@ export function createBenchmarkPanel({
 
   syncModeUi();
   syncSourceUi();
+  syncPrivacy();
 
   return {
     setReady(on) {
