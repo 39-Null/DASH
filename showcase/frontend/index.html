@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DASH · 微表情皮套人</title>
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=6">
 <script type="importmap">
 {"imports":{
   "three": "./vendor/three.module.js",
@@ -91,7 +91,13 @@
     <section class="paper-card card-output" id="output-card">
       <span class="pushpin pin-blue"></span>
       <div class="zone mono zone-blue">[ ZONE 02 : 皮套人 ]</div>
-      <h2 class="card-title title-blue">皮套人预览</h2>
+      <div class="card-head">
+        <h2 class="card-title title-blue">皮套人预览</h2>
+        <label class="picker avatar-picker mono">皮套人
+          <select id="avatar-select" disabled><option>加载中…</option></select>
+        </label>
+      </div>
+      <p class="avatar-error mono" id="avatar-error" hidden></p>
 
       <div class="render-box">
         <canvas id="avatar-canvas"></canvas>
@@ -99,6 +105,10 @@
           <img src="assets/img/icon-axis-3d.svg" alt="">
           <p class="idle-main">等待开始演示</p>
           <p class="mono idle-sub">VRM · 52 BLENDSHAPE</p>
+        </div>
+        <div class="avatar-progress mono" id="avatar-progress" hidden>
+          <span id="avatar-progress-text">准备加载皮套人…</span>
+          <span class="avatar-progress-track"><i id="avatar-progress-bar"></i></span>
         </div>
       </div>
 
@@ -110,7 +120,7 @@
       </div>
 
       <div class="card-foot">
-        <label class="picker mono">模型
+        <label class="picker mono">感知模型
           <select id="model-select" disabled><option>加载中…</option></select>
         </label>
         <label class="picker mono">
@@ -173,6 +183,6 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js?v=6"></script>
+<script type="module" src="src/main.js?v=7"></script>
 </body>
 </html>

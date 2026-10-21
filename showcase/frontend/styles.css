@@ -105,11 +105,12 @@ body {
   align-items: center;
   gap: 16px;
 }
-.brand { display: flex; align-items: center; gap: 10px; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .logo {
   font-family: var(--font-display);
   font-size: 26px;
   color: var(--ink);
+  white-space: nowrap;
 }
 .logo em { font-style: normal; color: var(--accent); }
 .version {
@@ -120,9 +121,16 @@ body {
   border-radius: 4px;
   padding: 2px 8px;
 }
-.status { display: flex; align-items: center; gap: 12px; }
+.status { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .cpu-icon { width: 18px; height: 18px; opacity: 0.7; }
-.status-text { font-size: 11px; color: var(--muted); }
+.status-text {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .fps { font-size: 11px; color: var(--accent); font-weight: 600; }
 
 /* ---------- 主版面 ---------- */
@@ -164,6 +172,22 @@ body {
   margin: 6px 0 18px;
 }
 .title-blue { color: var(--accent-ink); }
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  margin: 6px 0 18px;
+}
+.card-head .card-title { margin: 0; }
+.avatar-picker { flex-shrink: 0; }
+.avatar-picker select { max-width: 180px; }
+.avatar-error {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #B91C1C;
+  margin: -8px 0 10px;
+}
 
 /* ---------- 拖放区 ---------- */
 .source-stage { flex: 1; display: flex; }
@@ -284,6 +308,47 @@ body {
 .render-idle img { width: 50px; height: 50px; opacity: 0.8; }
 .idle-main { font-size: 13px; font-weight: 500; }
 .idle-sub { font-size: 11px; color: var(--accent); opacity: 0.8; letter-spacing: 0.05em; }
+
+/* 皮套人懒加载进度（覆盖在渲染盒底部，不遮挡画布交互） */
+.avatar-progress {
+  position: absolute;
+  left: 12px; right: 12px; bottom: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.84);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}
+.avatar-progress-track {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+.avatar-progress-track i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #7DD3FC;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-fast) linear;
+}
+.avatar-progress-track i.indeterminate {
+  width: 35%;
+  transform: none;
+  animation: avatar-progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes avatar-progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
 
 /* ---------- 卡脚 ---------- */
 .card-foot {
@@ -595,6 +660,9 @@ a.link-card:hover { transform: rotate(0deg) translateY(-4px); }
     border-radius: 20px;   /* Figma mobile 统一 20px，不再用不对称大圆角 */
   }
   .card-title { font-size: 28px; margin-bottom: 12px; }
+  .card-head { flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .card-head .card-title { margin: 0; }
+  .avatar-picker select { max-width: 150px; }
   .dropzone { min-height: 220px; }
   .source-box { min-height: 240px; }
   .render-box { min-height: 320px; }
@@ -611,6 +679,8 @@ a.link-card:hover { transform: rotate(0deg) translateY(-4px); }
   /* 了解更多：卡片网格 */
   .link-row { gap: 12px; }
   .link-card { min-width: 0; flex: 1 1 150px; padding: 12px 14px; }
+
+  .status-text { max-width: 140px; }
 
   /* 装饰件缩小 */
   .pushpin { width: 12px; height: 12px; }

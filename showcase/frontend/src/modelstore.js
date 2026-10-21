@@ -55,20 +55,39 @@ export async function fetchManifest() {
   return resp.json();
 }
 
-// 确保拿到模型文件的 Blob（缓存命中则零网络）；返回 { blob, entry, fromCache }
+// manifest 条目类型：旧条目没有 kind，一律按感知模型处理
+export function modelKind(entry) {
+  return entry?.kind === "avatar" ? "avatar" : "perception";
+}
+
+// 确保拿到某个 manifest 条目的 Blob（缓存命中则零网络）；返回 { blob, entry, fromCache }
+export async function ensureEntry(entry, onProgress) {
+  if (!entry) throw new Error("manifest entry is missing");
+  const cachedVer = localStorage.getItem(`dash.modelVer.${entry.name}`);
+  if (cachedVer === entry.version) {
+    try {
+      const blob = await idbGet(entry.name);
+      if (blob) return { blob, entry, fromCache: true };
+    } catch {
+      // IndexedDB 不可用（隐私模式等）：退回网络下载
+    }
+  }
+  const blob = await downloadWithProgress(entry.url, entry.sizeBytes, onProgress);
+  try {
+    await idbPut(entry.name, blob);
+    localStorage.setItem(`dash.modelVer.${entry.name}`, entry.version);
+  } catch {
+    // 配额不足或存储被禁用：本次仍可加载，只是下次需要重新下载
+  }
+  return { blob, entry, fromCache: false };
+}
+
+// 按名字取模型（保持旧调用方式）
 export async function ensureModel(name, onProgress) {
   const manifest = await fetchManifest();
   const entry = manifest.models.find((m) => m.name === name);
   if (!entry) throw new Error(`model ${name} not in manifest`);
-  const cachedVer = localStorage.getItem(`dash.modelVer.${name}`);
-  if (cachedVer === entry.version) {
-    const blob = await idbGet(name);
-    if (blob) return { blob, entry, fromCache: true };
-  }
-  const blob = await downloadWithProgress(entry.url, entry.sizeBytes, onProgress);
-  await idbPut(name, blob);
-  localStorage.setItem(`dash.modelVer.${name}`, entry.version);
-  return { blob, entry, fromCache: false };
+  return ensureEntry(entry, onProgress);
 }
 
 // 工具：把缓存的 Blob 转成 FaceLandmarker 需要的 Uint8Array
