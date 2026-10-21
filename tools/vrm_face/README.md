@@ -20,7 +20,7 @@
 - `unknown` -> 组名，例如 `Surprised`
 - `fun` -> `relaxed`
 
-当前展示线代码写入 `joy`、`sorrow`、`surprise`，这些名称在 VRM 0.x 资产上不存在，`setValue` 会静默无效。视线也写入了空的 `lookUp/Down/Left/Right` expression，而现有模型的 `lookAtTypeName` 全部是 `Bone`。
+P0-1 落地前，展示线代码曾写入 `joy`、`sorrow`、`surprise`，这些名称在 VRM 0.x 资产上不存在，`setValue` 会静默无效；视线也曾写入空的 `lookUp/Down/Left/Right` expression，而现有模型的 `lookAtTypeName` 全部是 `Bone`。当前实现已由 PR #22/#23 接入 `avatar.js`，本目录保留为上游源码、测试与接口说明。
 
 P0-1 按运行时 `expressionMap` 的实际名称解析，不硬编码旧名称；视线优先输出 `vrm.lookAt.yaw/pitch`。
 
@@ -185,5 +185,10 @@ for (const name of customProfile.presetNamesToClear) {
 - P0-2 同一 morph target 只绑定一次，避免 `morphTargetInfluences +=` 双重计数。
 - P0-2 的 `eyeWide` 优先 `EYE_Spread`，没有时回退 `EYE_Surprised`。
 - P0-2 的 `mouthClose` 依赖 `MTH_Close`；`sample-a` 没有该目标，会被跳过。
+- P0-2 的 `mouthStretch` 优先绑定 `MTH_I`，缺失时回退 `MTH_E`；当前每个 expression 只绑定第一个存在的目标。
 - 分眼眨眼模式会显式把 `blink` 置 0；合并眨眼模式会显式把 `blinkLeft/Right` 置 0。
 - `_neutral` 只用于校准门控，不驱动 VRM 的 `neutral` expression。
+
+## 同步约定
+
+`showcase/frontend/src/vrm_face/facemap.mjs` 与 `showcase/frontend/src/vrm_face/morphscan.mjs` 是运行副本，内容必须与本目录保持一致。修改本目录后请同时覆盖运行副本，并在提交前比较两份文件；展示线只改运行副本时，也应把改动回写到本目录，避免上下游漂移。

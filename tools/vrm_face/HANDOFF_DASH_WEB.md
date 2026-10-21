@@ -2,8 +2,8 @@
 
 > 来源：模型线  
 > 日期：2026-10-21  
-> 状态：P0-1 / P0-2 模块已实现并通过测试；尚未接入 `showcase/frontend/src/avatar.js`
-> 约束：模型线不修改展示线文件；以下接入由 DASH-Web pane 执行
+> 状态：P0-1 / P0-2 模块已实现并通过测试；已由 PR #22/#23 接入 `showcase/frontend/src/avatar.js`。本文件保留为接口契约与历史交接记录
+> 约束：最初约定模型线不直接修改展示线文件，接入由 DASH-Web pane 执行；该接入已完成
 
 ---
 
@@ -318,13 +318,13 @@ node --test tools/vrm_face/facemap.test.mjs tools/vrm_face/morphscan.test.mjs
 D:\Miniconda3\python.exe -m pytest -q
 ```
 
-当前结果：Node 36 项通过；pytest 34 项通过。
+当前结果：Node 37 项通过；pytest 34 项通过（当前 master）。
 
 ---
 
-## 7. 需要 DASH-Web pane 确认的事项
+## 7. 接入确认事项（已完成，保留供追溯）
 
-1. `avatar.js` 的接入与 PR 由 DASH-Web pane 执行；模型线不改该文件。
+1. `avatar.js` 的接入已由 PR #22/#23 完成；本文件不再要求 DASH-Web 重新接入。
 2. `dt` 的来源：固定 `1/30`，还是用 `tick` 的真实时间差？建议真实时间差，避免掉帧时平滑速度变化。
 3. 第一阶段是否只开 preset 模式，custom 模式用开关控制？建议先 preset，稳定后再开 custom。
 4. 是否需要在 benchmark 面板新增 `mappingMs` 一行？如果需要，展示线加 UI，模型线提供 `meta`。
