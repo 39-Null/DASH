@@ -2,8 +2,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=10";
-import { mirrorHeadEuler, pickGaze } from "./mirror.js?v=10";
+import { Rig } from "./rig.js?v=11";
+import { mapHeadEuler, pickGaze } from "./mirror.js?v=11";
 
 function bs(scoreMap, name) {
   return scoreMap.get(name) ?? 0;
@@ -228,12 +228,12 @@ export class Avatar {
   }
 
   // headEuler: {x, y, z} 度（facialTransformationMatrix 提取值，只做小角度跟随）
-  // mirror: 摄像头预览是镜像的，yaw / roll 取反；pitch 不受水平镜像影响
+  // mapHeadEuler 修正 pitch 符号；mirror 时再翻转 yaw / roll
   setHeadEuler(headEuler, { mirror = false } = {}) {
     if (!headEuler) return;
     this._lastHeadEuler = headEuler;
     this._lastMirror = mirror;
-    const e = mirror ? mirrorHeadEuler(headEuler) : headEuler;
+    const e = mapHeadEuler(headEuler, { mirror });
     const rad = (d) => (d * Math.PI) / 180;
     const cap = (v) => Math.max(-0.5, Math.min(0.5, v));
     this._headTarget = {

@@ -1,15 +1,15 @@
 // 摄像头预览是镜像的（CSS scaleX(-1)），但 MediaPipe 输入的是未镜像的原始帧。
-// 为了让皮套人与镜像预览方向一致，只对“驱动 VRM”的语义做镜像：
-//   - head yaw / roll 取反（pitch 不受水平镜像影响）
-//   - 左右眼视线交换
+// 驱动 VRM 前需要修正两件事：
+//   - head pitch 取反：facialTransformationMatrix 的 pitch 方向与 VRM head 骨骼相反
+//     （实测抬头会变成低头，因此 x 统一取负）
+//   - 摄像头镜像时 yaw / roll 取反，并交换左右眼视线
 // 照片 / 视频预览不镜像，调用方不要传 mirror。
-
-export function mirrorHeadEuler(headEuler) {
+export function mapHeadEuler(headEuler, { mirror = false } = {}) {
   if (!headEuler) return headEuler;
   return {
-    x: headEuler.x,
-    y: -headEuler.y,
-    z: -headEuler.z,
+    x: -headEuler.x,
+    y: mirror ? -headEuler.y : headEuler.y,
+    z: mirror ? -headEuler.z : headEuler.z,
   };
 }
 
@@ -24,13 +24,4 @@ export function pickGaze(cats, mirror) {
     }
   }
   return mirror ? { left: right, right: left } : { left, right };
-}
-
-// 摄像头方向：部分笔记本（如华为 FHD Camera 5959:0107）的传感器倒装，
-// getUserMedia 没有方向元数据，浏览器不会自动纠正。返回 0 或 180。
-// saved 是用户对该 deviceId 的显式选择（"0" / "180"），优先于自动识别。
-export function cameraRotateFor(label, saved) {
-  if (saved === "180") return 180;
-  if (saved === "0") return 0;
-  return /FHD Camera \(5959:0107\)/i.test(label || "") ? 180 : 0;
 }
