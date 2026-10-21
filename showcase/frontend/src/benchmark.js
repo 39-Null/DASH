@@ -1,7 +1,7 @@
 // 性能测试：端到端 FPS / 感知推理 / rig+渲染 / 工作量长尾。
 // 数据源只允许真实媒体（内置隐藏头像 / 本地图片 / 本地视频 / 摄像头），不做合成信号。
 // 判定规则见 benchmark-rules.js：帧间隔受刷新率量化，只作诊断；判定以工作量与吞吐为准。
-import { toFrame } from "./perception.js?v=9";
+import { toFrame } from "./perception.js?v=10";
 import {
   TARGET_FPS,
   FRAME_BUDGET_MS,
@@ -9,7 +9,7 @@ import {
   WORK_OVER_BUDGET_WARN_RATIO,
   evaluateVerdict,
   verdictLabel,
-} from "./benchmark-rules.js?v=9";
+} from "./benchmark-rules.js?v=10";
 
 export const BENCH_SCHEMA = "dash.benchmark.v2";
 export { TARGET_FPS, FRAME_BUDGET_MS };
@@ -255,12 +255,15 @@ async function createSource(kind, file, { getActiveCamera, onStatus }) {
     let video = null;
     let ownStream = null;
     let revoke = null;
+    let getFrame = null;
+    let cameraRotate = 0;
     const t0 = performance.now();
 
     if (kind === "camera") {
       const active = getActiveCamera?.();
       if (active?.video && active.video.readyState >= 2) {
         video = active.video;
+        getFrame = active.getFrame || null;
       } else {
         onStatus?.("正在打开摄像头…");
         ownStream = await navigator.mediaDevices.getUserMedia({
@@ -295,6 +298,12 @@ async function createSource(kind, file, { getActiveCamera, onStatus }) {
       const track = kind === "camera" ? video.srcObject?.getVideoTracks?.()[0] : null;
       const rate = track?.getSettings?.().frameRate;
       if (rate) nominalFps = round(rate, 1);
+      if (kind === "camera" && !getFrame) {
+        const id = track?.getSettings?.().deviceId || "default";
+        let saved = null;
+        try { saved = localStorage.getItem(`dash.cameraRotate.${id}`); } catch {}
+        cameraRotate = cameraRotateFor(track?.label || "", saved);
+      }
     } catch {}
 
     return {
@@ -307,10 +316,19 @@ async function createSource(kind, file, { getActiveCamera, onStatus }) {
       nominalFps,
       faceExpected: true,
       draw() {
+        const src = getFrame ? getFrame() : video;
+        const sw = src.videoWidth || src.width;
+        const sh = src.videoHeight || src.height;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, PROCESS_W, PROCESS_H);
-        const rect = coverRect(video.videoWidth, video.videoHeight, PROCESS_W, PROCESS_H);
-        ctx.drawImage(video, rect.x, rect.y, rect.w, rect.h);
+        if (!getFrame && cameraRotate === 180) {
+          ctx.translate(PROCESS_W, PROCESS_H);
+          ctx.rotate(Math.PI);
+        }
+        const rect = coverRect(sw, sh, PROCESS_W, PROCESS_H);
+        ctx.drawImage(src, rect.x, rect.y, rect.w, rect.h);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         return canvas;
       },
       startCaptureCounter() {

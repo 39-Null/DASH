@@ -19,10 +19,14 @@ Python 后端（`backend/`）保留为开发调试工具与旧 fusion 链路，�
   `assets/vrm/sample-a.vrm`、`assets/vrm/sample-b.vrm` 是本地登记的两个 VRoid 样例，部署时需另行上传。
 - 发布新模型/皮套人：文件放进对应目录 + manifest 版本号 +1，访客下次打开自动更新。
 
-## 摄像头镜像
+## 摄像头镜像与方向
 
 摄像头预览是镜像的（自拍习惯），但 MediaPipe 输入是未镜像的原始帧。驱动 VRM 时对 head yaw / roll 取反、
 左右眼视线交换（`src/mirror.js`）；照片 / 视频预览不镜像，不做处理。
+
+部分笔记本摄像头（如华为 `FHD Camera (5959:0107)`）的传感器倒装，`getUserMedia` 又没有方向元数据，
+浏览器不会自动纠正。`input.js` 会按设备标签默认旋转 180°，并在 ZONE 01 卡脚提供「画面翻转」按钮，
+按 `deviceId` 记住选择。旋转同时作用于预览（CSS）和推理画布（canvas），所以网格、皮套人、视线方向保持一致。
 
 ## 性能测试（ZONE 03）
 
