@@ -1,7 +1,7 @@
 // 性能测试：端到端 FPS / 感知推理 / rig+渲染 / 工作量长尾。
 // 数据源只允许真实媒体（内置隐藏头像 / 本地图片 / 本地视频 / 摄像头），不做合成信号。
 // 判定规则见 benchmark-rules.js：帧间隔受刷新率量化，只作诊断；判定以工作量与吞吐为准。
-import { toFrame } from "./perception.js?v=12";
+import { toFrame } from "./perception.js?v=13";
 import {
   TARGET_FPS,
   FRAME_BUDGET_MS,
@@ -9,7 +9,7 @@ import {
   WORK_OVER_BUDGET_WARN_RATIO,
   evaluateVerdict,
   verdictLabel,
-} from "./benchmark-rules.js?v=12";
+} from "./benchmark-rules.js?v=13";
 
 export const BENCH_SCHEMA = "dash.benchmark.v2";
 export { TARGET_FPS, FRAME_BUDGET_MS };

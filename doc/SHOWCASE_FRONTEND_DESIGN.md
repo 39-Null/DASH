@@ -232,6 +232,7 @@
 |---|---|---|
 | `input.js` | 三种来源统一为「帧序列」 | 摄像头流 / 图片 / 视频 → 逐帧 `HTMLVideoElement` 或 `ImageBitmap` |
 | `vrm_face/facemap.mjs` | P0-1 preset 映射（vendored） | 52 ARKit → 运行时 VRM expression + lookAt |
+| `vrm_face/morphscan.mjs` | P0-2 custom 映射（vendored） | 扫描 BRW/EYE/MTH target → `arkit_*` expression |
 | `perception.js` | MediaPipe FaceLandmarker 推理 | 帧 → `{ landmarks: (478,3), blendshapes: (52,) }` |
 | `mesh.js` | 网格叠加绘制 | landmarks → 2D canvas 点线 |
 | `avatar.js` | 皮套人驱动 | blendshapes → VRM expression |
@@ -251,6 +252,12 @@
 > 实际 expression 名称按运行时 `expressionMap` 解析（`happy` / `sad` / `Surprised` / `relaxed`），
 > 不再写 `joy` / `sorrow` / `surprise`。摄像头使用 30 帧中性校准 + 平滑；照片 / 视频使用无校准的 snap mapper。
 > 视线优先写骨骼 `vrm.lookAt.yaw/pitch`（`applier.constructor.type === "bone"`），并关闭 `autoUpdate`。
+>
+> **P0-2 custom（2026-10-21）**：`src/vrm_face/morphscan.mjs` 扫描模型自带的 `BRW_* / EYE_* / MTH_*` target，
+> 运行时注册 `arkit_*` expression；卡脚「面部映射」切换 preset/custom，默认 preset。custom 数量：
+> `sample-a` 20，`sample-b` / `three-vrm-girl` 21。VRM 0.x 的 targetNames 在 `primitive.extras`，
+> 加载后按 `parser.associations` 补进 `morphTargetDictionary`，否则扫描不到通道。
+> 切换模式时 `resetValues()`，custom 模式不写 `happy/sad/...` preset。
 
 早期映射表（仅作语义参考）：
 

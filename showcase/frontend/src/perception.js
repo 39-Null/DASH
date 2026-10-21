@@ -3,7 +3,7 @@
 //   { blendshapes: [{categoryName, score}], landmarks: [{x,y,z}×478], headEuler: {x,y,z} }
 // headEuler 来自 Tasks JS 的 facialTransformationMatrixes（4x4 变换矩阵），
 // 比服务端的 solvePnP 近似更准。
-import { FaceLandmarker, FilesetResolver } from "../vendor/vision/vision_bundle.mjs?v=12";
+import { FaceLandmarker, FilesetResolver } from "../vendor/vision/vision_bundle.mjs?v=13";
 
 let _fileset = null;
 

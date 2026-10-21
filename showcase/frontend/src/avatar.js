@@ -1,10 +1,11 @@
 // VRM 皮套人渲染（场景设置与映射表照搬自已验证的 viewer/index.html）
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=12";
-import { mapHeadEuler } from "./mirror.js?v=12";
-import { buildProfile, FaceMapper } from "./vrm_face/facemap.mjs?v=12";
+import { VRMLoaderPlugin, VRMUtils, VRMExpression, VRMExpressionMorphTargetBind } from "@pixiv/three-vrm";
+import { Rig } from "./rig.js?v=13";
+import { mapHeadEuler } from "./mirror.js?v=13";
+import { buildProfile, FaceMapper } from "./vrm_face/facemap.mjs?v=13";
+import { buildCustomProfile, CustomFaceMapper, groupBindsByMesh } from "./vrm_face/morphscan.mjs?v=13";
 
 export class Avatar {
   constructor(canvas) {
@@ -21,6 +22,10 @@ export class Avatar {
     this.faceProfile = null;
     this.faceMapper = null;
     this.snapMapper = null;
+    this.customProfile = null;
+    this.customMapper = null;
+    this.customSnapMapper = null;
+    this.faceMode = "preset";
     this.lastMapping = null;
     // 性能埋点：渲染循环的真实耗时（benchmark 读取）
     this.lastTiming = { rigMs: 0, renderMs: 0, totalMs: 0 };
@@ -113,6 +118,7 @@ export class Avatar {
     const vrm = gltf.userData.vrm;
     if (!vrm) throw new Error("不是有效的 VRM 文件");
     VRMUtils.rotateVRM0(vrm); // VRM 0.x 面向镜头；VRM 1.0 保持原朝向
+    this._patchMorphTargetNames(gltf);
 
     const old = this.vrm;
     this.vrm = vrm;
@@ -132,6 +138,27 @@ export class Avatar {
       } catch {}
     }
     return vrm;
+  }
+
+  // VRM 0.x 把 targetNames 放在 primitive.extras 上，而 three.js GLTFLoader
+  // 只读 mesh.extras.targetNames，导致 morphTargetDictionary 全是数字键。
+  // 这里按 parser.associations 把 primitive 的名称补进字典，custom 扫描才能命中。
+  _patchMorphTargetNames(gltf) {
+    const parser = gltf?.parser;
+    if (!parser?.associations || !parser?.json) return;
+    gltf.scene.traverse((object) => {
+      if (!object.isMesh || !object.morphTargetDictionary) return;
+      const assoc = parser.associations.get(object);
+      if (!assoc || assoc.meshes == null || assoc.primitives == null) return;
+      const prim = parser.json.meshes?.[assoc.meshes]?.primitives?.[assoc.primitives];
+      const names = prim?.extras?.targetNames;
+      if (!Array.isArray(names)) return;
+      const count = Object.keys(object.morphTargetDictionary).length;
+      if (names.length !== count) return;
+      names.forEach((name, i) => {
+        if (typeof name === "string" && name) object.morphTargetDictionary[name] = i;
+      });
+    });
   }
 
   // 按当前 VRM 的运行时能力建立 preset 映射器。
@@ -157,8 +184,45 @@ export class Avatar {
       calibrationFrames: 0,
       smoothing: false,
     });
+
+    this.customProfile = buildCustomProfile({ morphTargets, expressions, lookAtType, format });
+    this.customMapper = new CustomFaceMapper(this.customProfile);
+    this.customSnapMapper = new CustomFaceMapper(this.customProfile, {
+      calibrationFrames: 0,
+      smoothing: false,
+    });
+    this._injectCustomExpressions(vrm, this.customProfile);
+
     if (vrm.lookAt) vrm.lookAt.autoUpdate = false;
     this.lastMapping = null;
+  }
+
+  // 把 custom profile 注册成 three-vrm expression；每个 target 只绑定一次。
+  _injectCustomExpressions(vrm, profile) {
+    const E = vrm.expressionManager;
+    if (!E || !profile) return;
+    const meshes = [];
+    vrm.scene.traverse((object) => {
+      if (object.isMesh && object.morphTargetDictionary) meshes.push(object);
+    });
+    for (const { def, groups } of groupBindsByMesh(meshes, profile)) {
+      if (!groups.length) continue;
+      if (E.getExpression(def.name)) continue;
+      try {
+        const expression = new VRMExpression(def.name);
+        for (const group of groups) {
+          expression.addBind(new VRMExpressionMorphTargetBind({
+            primitives: group.primitives,
+            index: group.index,
+            weight: group.weight,
+          }));
+        }
+        expression.overrideBlink = def.overrideBlink;
+        expression.overrideMouth = def.overrideMouth;
+        vrm.scene.add(expression);
+        E.registerExpression(expression);
+      } catch {}
+    }
   }
 
   // poseImage / poseWorld: flat 33×4；hands: {left, right} flat 21×3
@@ -234,7 +298,9 @@ export class Avatar {
     if (!this.vrm) return;
     const E = this.vrm.expressionManager;
     if (!E) return;
-    const mapper = snap ? this.snapMapper : this.faceMapper;
+    const mapper = this.faceMode === "custom"
+      ? (snap ? this.customSnapMapper : this.customMapper)
+      : (snap ? this.snapMapper : this.faceMapper);
     if (!mapper) return;
 
     const now = performance.now();
@@ -261,6 +327,28 @@ export class Avatar {
       this.vrm.lookAt.pitch = out.lookAt.pitch;
     }
     this.lastMapping = out.meta;
+  }
+
+  // 切换 preset / custom。先清零所有 expression，避免两套映射叠加。
+  setFaceMode(mode, { reapply = true } = {}) {
+    if (mode !== "preset" && mode !== "custom") return;
+    if (this.faceMode === mode) return;
+    this.faceMode = mode;
+    const E = this.vrm?.expressionManager;
+    try {
+      E?.resetValues();
+    } catch {}
+    try {
+      this.vrm?.lookAt?.reset();
+    } catch {}
+    this.faceMapper?.reset();
+    this.snapMapper?.reset();
+    this.customMapper?.reset();
+    this.customSnapMapper?.reset();
+    this._lastBlendAt = 0;
+    if (reapply && this._lastCats) {
+      this.setBlendshapes(this._lastCats, { mirror: this._lastMirror, snap: this._lastSnap });
+    }
   }
 
   // headEuler: {x, y, z} 度（facialTransformationMatrix 提取值，只做小角度跟随）
@@ -291,6 +379,8 @@ export class Avatar {
     } catch {}
     this.faceMapper?.reset();
     this.snapMapper?.reset();
+    this.customMapper?.reset();
+    this.customSnapMapper?.reset();
     try {
       this.vrm.lookAt?.reset();
     } catch {}
