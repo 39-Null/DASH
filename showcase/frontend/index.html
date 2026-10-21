@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DASH · 微表情皮套人</title>
-<link rel="stylesheet" href="styles.css?v=6">
+<link rel="stylesheet" href="styles.css?v=7">
 <script type="importmap">
 {"imports":{
   "three": "./vendor/three.module.js",
@@ -165,6 +165,8 @@
         <button class="btn" id="bench-abort" hidden>中止</button>
       </div>
 
+      <p class="bench-privacy mono" id="bench-privacy">隐私：未调用摄像头；画面只在本机处理，不会上传。</p>
+
       <div class="bench-live" id="bench-live" hidden>
         <div class="bench-live-row mono">
           <span><b id="bench-live-fps">—</b> FPS</span>
@@ -233,6 +235,6 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js?v=7"></script>
+<script type="module" src="src/main.js?v=8"></script>
 </body>
 </html>
