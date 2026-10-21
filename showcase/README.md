@@ -9,10 +9,35 @@ Python 后端（`backend/`）保留为开发调试工具与旧 fusion 链路，�
 
 ## 模型分发（更新模型 = 换文件 + 版本号 +1）
 
-- `frontend/models/manifest.json`：模型清单（name / url / version / sizeBytes），入库；
-  模型本体（`face_landmarker.task` 等）按仓库政策不入库，需 scp 到部署目录。
+- `frontend/models/manifest.json`：模型清单，入库；每条包含 `name / kind / url / version / sizeBytes`。
+  `kind` 取 `perception`（感知模型）或 `avatar`（VRM 皮套人）；旧条目没有 `kind` 时按 `perception` 处理。
+- 感知模型与皮套人共用同一套 manifest + IndexedDB 缓存，但两个下拉严格按 `kind` 过滤，语义不混用。
 - 浏览器每次打开页面拉 manifest 比对版本 → 变了才下载 → IndexedDB 缓存。
-- 发布新模型：文件放进 `frontend/models/` + manifest 版本号 +1，访客下次打开自动更新。
+- 皮套人**懒加载**：页面启动只加载感知模型；第一次开始演示、开始性能测试或手动切换皮套人时才下载/解析 VRM，
+  预览区显示下载百分比与解析状态，第二次切换命中 IndexedDB。
+- 模型本体（`face_landmarker.task`、`*.vrm`）按仓库政策不入库，需上传到部署目录；
+  `assets/vrm/sample-a.vrm`、`assets/vrm/sample-b.vrm` 是本地登记的两个 VRoid 样例，部署时需另行上传。
+- 发布新模型/皮套人：文件放进对应目录 + manifest 版本号 +1，访客下次打开自动更新。
+
+## 性能测试（ZONE 03）
+
+页面在皮套人预览与「了解更多」之间提供一键性能测试：
+
+| 项 | 说明 |
+|---|---|
+| 信号源 | 内置头像（隐藏输入，不渲染到页面）、本地图片、本地视频、摄像头 |
+| 配置 | 按时长（5–600 s，默认 30 s）或按帧数（30–3000 帧，默认 300 帧） |
+| 采集 | 端到端 FPS、感知推理耗时、rig+渲染耗时、帧间隔、超预算帧、人脸检出率 |
+| 媒体信息 | 原始分辨率、处理分辨率、加载/启动耗时（ms）、视频/摄像头实测帧率、标称帧率 |
+| 判定 | 平均 FPS ≥ 30；P95 帧耗时 ≤ 33.3 ms；超预算帧 ≤ 5% |
+| 导出 | 复制 Markdown 表格；下载 JSON（`dash.benchmark.v1`）或 CSV |
+
+口径：预热 1 s 不计入；端到端 FPS 取测量窗口内 VRM 渲染帧数；感知耗时只统计 `detectForVideo`；
+rig+渲染来自渲染循环埋点；丢帧率 = 帧间隔超过 33.3 ms 的帧占比。后台标签页会中止测试并标注结果无效。
+
+内置头像仅作为测试输入，通过 `Image` 对象在内存中解码，**不会插入 DOM、也不会在页面上显示**；
+报告里只记录它的分辨率、加载耗时与人脸检出率。软件渲染（如无 GPU 的 headless 浏览器）会显著拉低 FPS，
+正式数据请在本机 Chrome 上复测。
 
 ## 运行（前端，纯静态即可）
 

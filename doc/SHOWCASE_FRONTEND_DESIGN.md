@@ -389,3 +389,106 @@
 | `Pushpin` / `MaskingTape` / `ScrapNew` / `InstructionScrap` / `ScrapArrow` | 装饰件与便签（只取视觉语言，文案换我们的） |
 
 已导出资产（`showcase/frontend/assets/img/`）：`desk-texture.png`（2400×1600 桌面纹理）、`polaroid-*.png`×4（拍立得占位图，正式版换成我们自己的 demo 截图）、`icon-*.svg`×5（upload-cloud / axis-3d / cpu / settings / arrow-right）。
+
+---
+
+## 15. 性能测试区块（2026-10-21 新增）
+
+### 15.1 位置与视觉
+
+- 位置：`output-card`（ZONE 02）之后、底部 `strip`（了解更多 / 实时读数）之前，整行 `paper-card`。
+- 视觉沿用 `strip` 的卡片语汇：衬线 `h3` + mono 标签、黄色/绿色图钉、扁平数据块、黄色便签式判定条。
+- 桌面为「配置行 + 实时行 + 结果区」；≤820px 单列，按钮可换行，表格压缩为两列。
+
+### 15.2 信号源
+
+| 选项 | 说明 | 页面可见性 |
+|---|---|---|
+| 内置头像（默认） | `assets/img/bench-face.jpg`，内存中解码，轻微位移/缩放让 tracker 持续工作 | **不插入 DOM，不显示** |
+| 本地图片 | 用户选择，按 cover 重采样到 640×480 | 仅测试，不进入 ZONE 01 |
+| 本地视频 | 静音循环播放，实测播放帧率 | 同上 |
+| 摄像头 | 优先复用 ZONE 01 已开启的流；否则自行申请并释放 | 不新增可见预览 |
+
+报告必须记录 `dataSource`、原始分辨率、处理分辨率、加载/启动耗时、标称/实测帧率、人脸检出率。
+
+### 15.3 指标口径
+
+| 指标 | 口径 |
+|---|---|
+| 端到端 FPS | 测量窗口内 `avatar.renderedFrames` 增量 / 窗口时长 |
+| 感知推理耗时 | `detectForVideo` 前后 `performance.now()` |
+| rig+渲染耗时 | `avatar.js` 渲染循环内分别包 `vrm.update + 表情/头部` 与 `renderer.render` |
+| 帧耗时 | 相邻 rAF 时间戳差值；P50 / P95 / P99 / max |
+| 丢帧率 | 帧间隔 > 33.3 ms 的帧数 / 有效帧数（报告中同时给出原值） |
+| 预热 | 前 1 s 不计入统计 |
+| 中止 | `document.hidden` 或 rAF 间隔 > 5 s，结果标记无效 |
+
+### 15.4 结果 schema（`dash.benchmark.v1`）
+
+关键字段：
+
+```json
+{
+  "schema": "dash.benchmark.v1",
+  "source": {"kind": "builtin-image", "width": 1706, "height": 1279,
+             "processedWidth": 640, "processedHeight": 480,
+             "loadMs": 120.0, "startupMs": null, "nominalFps": null,
+             "captureFps": null, "faceDetectedRatio": 1.0},
+  "environment": {"userAgent": "...", "hardwareConcurrency": 8,
+                  "devicePixelRatio": 1.25, "wasmSimd": true,
+                  "webglRenderer": "...", "refreshHz": 60,
+                  "model": {"name": "face_landmarker", "version": "1.0.0"},
+                  "avatar": {"name": "vrm-girl", "version": "1.0.0"}},
+  "metrics": {"fpsAvg": 30.0, "frameMs": {"p95": 33.0},
+              "perceptionMs": {"mean": 12.0, "p95": 15.0},
+              "rigRenderMs": {"rig": {"mean": 1.5}, "render": {"mean": 3.0},
+                              "total": {"p95": 6.0}},
+              "pipelineMs": {"mean": 18.0, "p95": 24.0},
+              "overBudgetFrames": 0, "overBudgetRatio": 0.0},
+  "verdict": {"pass": true, "checks": []}
+}
+```
+
+### 15.5 判定与导出
+
+- 通过条件（三项同时满足）：平均 FPS ≥ 30；P95 帧耗时 ≤ 33.3 ms；超预算帧 ≤ 5%。
+- 导出：Markdown（可直接粘进 `doc/report/`）、JSON、CSV；文件名 `dash-benchmark-YYYYMMDD-HHMMSS.*`。
+- 报告必须包含数据来源、分辨率、加载耗时、帧率、环境信息与口径说明，避免把 headless/软件渲染数据当成真机结论。
+
+---
+
+## 16. 皮套人切换与懒加载（2026-10-21 新增）
+
+### 16.1 控件
+
+- 位置：ZONE 02 标题行「皮套人预览」右侧，`皮套人 AVATAR` 下拉；卡脚原「模型」改名为「感知模型」，两个下拉语义严格分开。
+- 启动时**不加载 VRM**。第一次开始演示、开始性能测试或手动切换时按需加载，预览区底部显示
+  `下载皮套人 45% · 2.4 / 5.3 MB` 或 `解析皮套人模型…`；第二次切换命中 IndexedDB。
+- 切换成功后保留轨道相机状态（theta/phi/radius/target）与视角预设，重建 `Rig`，重放最近一帧表情。
+- 解析顺序：先解析新模型，成功后才移除并 `VRMUtils.deepDispose` 旧模型；失败时旧模型继续可用，
+  下拉回退到当前项，卡片标题下方显示可读错误。
+
+### 16.2 manifest 扩展
+
+```json
+{
+  "name": "vrm-girl",
+  "kind": "avatar",
+  "label": "少女（默认）",
+  "default": true,
+  "url": "assets/three-vrm-girl.vrm",
+  "version": "1.0.0",
+  "sizeBytes": 5558600,
+  "notes": "pixiv three-vrm sample"
+}
+```
+
+- `kind` 缺省 = `perception`，保证旧 manifest 兼容；感知下拉只列 `perception`，皮套人下拉只列 `avatar`。
+- 默认项由 `default: true` 决定；用户选择写入 `localStorage["dash.avatar"]`。
+- 版本号变化会触发重新下载；VRM 文件本身仍遵守仓库 `.gitignore`（`*.vrm` 不入库）。
+
+### 16.3 资产与部署
+
+- 已登记：`vrm-girl`（pixiv sample，默认）、`vrm-sample-a`、`vrm-sample-b`（VRoid Project 样例）。
+- `assets/vrm/sample-a.vrm`、`sample-b.vrm` 为本地文件，部署时需上传；未上传时切换会显示错误并保留默认模型。
+- 授权：Sample A/B 为 VRoid 样例模型，公网分发前需确认许可；角色向模型（VAL、shibu_sendagaya 等）未登记。
