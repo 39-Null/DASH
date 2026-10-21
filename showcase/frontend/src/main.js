@@ -1,13 +1,13 @@
 // 状态机与组装：landing / stage(camera|photo|video)
 // 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
-import { Avatar } from "./avatar.js?v=10";
-import { MeshOverlay } from "./mesh.js?v=10";
-import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=10";
-import { SourceInput } from "./input.js?v=10";
-import { poseMetrics, handMetrics } from "./metrics.js?v=10";
-import * as perception from "./perception.js?v=10";
-import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=10";
-import { createBenchmarkPanel } from "./benchmark.js?v=10";
+import { Avatar } from "./avatar.js?v=11";
+import { MeshOverlay } from "./mesh.js?v=11";
+import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=11";
+import { SourceInput } from "./input.js?v=11";
+import { poseMetrics, handMetrics } from "./metrics.js?v=11";
+import * as perception from "./perception.js?v=11";
+import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=11";
+import { createBenchmarkPanel } from "./benchmark.js?v=11";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -27,7 +27,6 @@ const els = {
   nofaceBadge: $("noface-badge"),
   renderIdle: $("render-idle"),
   modelSelect: $("model-select"),
-  cameraFlip: $("btn-camera-flip"),
   avatarSelect: $("avatar-select"),
   avatarProgress: $("avatar-progress"),
   avatarProgressText: $("avatar-progress-text"),
@@ -259,7 +258,6 @@ function enterStage(mode_) {
   els.stopBtn.hidden = false;
   els.btnSecondary.hidden = mode_ === "camera";
   els.btnSecondary.textContent = mode_ === "photo" ? "换一张" : "换一个";
-  els.cameraFlip.hidden = mode_ !== "camera";
   els.stripTitle.textContent = "实时表情读数";
   els.stripTag.textContent = "LIVE BLENDSHAPES";
   readout.reset();
@@ -290,7 +288,6 @@ function backToLanding() {
   els.stopBtn.hidden = true;
   els.btnSecondary.hidden = true;
   els.nofaceBadge.hidden = true;
-  els.cameraFlip.hidden = true;
   els.renderIdle.hidden = !!(avatar && avatar.ready);
   els.stripTitle.textContent = "了解更多";
   els.stripTag.textContent = "LEARN MORE";
@@ -317,9 +314,7 @@ async function startCamera() {
     console.warn(e);
     return;
   }
-  setStatus(input.cameraRotate === 180
-    ? "● 运行中（camera · 已翻转画面）"
-    : "● 运行中（camera · 本地推理）");
+  setStatus("● 运行中（camera · 本地推理）");
   camRunning = true;
   cameraLoop();
 }
@@ -329,15 +324,12 @@ async function cameraLoop() {
   while (camRunning && state === "camera" && !benchActive) {
     if (video.readyState >= 2 && faceLmVideo) {
       try {
-        const frameSource = input.cameraRotate === 180 ? input.cameraFrame() : video;
-        if (frameSource) {
-          const frame = perception.toFrame(faceLmVideo.detectForVideo(frameSource, performance.now()));
-          frameCount++;
-          if (frame) applyFrame(frame, { mirror: true });
-          else {
-            mesh.clear();
-            readout.update([], {}); // 零值推进，轨道不冻结
-          }
+        const frame = perception.toFrame(faceLmVideo.detectForVideo(video, performance.now()));
+        frameCount++;
+        if (frame) applyFrame(frame, { mirror: true });
+        else {
+          mesh.clear();
+          readout.update([], {}); // 零值推进，轨道不冻结
         }
       } catch {
         // 时间戳回退等瞬时错误跳过这一帧
@@ -443,10 +435,6 @@ function bindEvents() {
   els.btnSecondary.addEventListener("click", () => els.fileInput.click());
   els.stopBtn.addEventListener("click", backToLanding);
   els.modelSelect.addEventListener("change", onModelChange);
-  els.cameraFlip.addEventListener("click", () => {
-    const deg = input.toggleCameraRotate();
-    setStatus(deg === 180 ? "摄像头画面已翻转（已记住此设备）" : "摄像头画面已恢复（已记住此设备）");
-  });
   els.avatarSelect.addEventListener("change", onAvatarChange);
   els.meshToggle.addEventListener("change", () => {
     mesh.enabled = els.meshToggle.checked;
@@ -546,10 +534,7 @@ async function boot() {
       };
     },
     getActiveCamera: () => (state === "camera" && els.sourceVideo.readyState >= 2
-      ? {
-          video: els.sourceVideo,
-          getFrame: input.cameraRotate === 180 ? () => input.cameraFrame() : null,
-        }
+      ? { video: els.sourceVideo }
       : null),
     onStart: () => { benchActive = true; },
     onEnd: () => {

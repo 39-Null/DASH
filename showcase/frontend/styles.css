@@ -269,8 +269,6 @@ body {
 }
 .source-box.mirrored .source-media,
 .source-box.mirrored #mesh-canvas { transform: scaleX(-1); }
-/* 倒装摄像头：预览转 180°，网格使用转正后的 landmark，不额外旋转 */
-.source-box.mirrored #source-video.rotate-180 { transform: scaleX(-1) rotate(180deg); }
 #mesh-canvas {
   position: absolute;
   top: 0; left: 0;
@@ -360,7 +358,6 @@ body {
   gap: 12px;
   margin-top: 16px;
 }
-.card-foot-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .hint { font-size: 12px; color: var(--muted); }
 .picker {
   display: flex;

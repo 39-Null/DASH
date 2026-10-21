@@ -281,12 +281,8 @@
 
 **摄像头镜像的驱动修正（2026-10-21）**：摄像头预览通过 `.mirrored` 做水平镜像，但 MediaPipe 收到的是
 未镜像的原始帧。网格直接画在镜像容器里，所以视觉对齐；皮套人不在镜像容器里，因此驱动前必须做语义镜像：
-head yaw / roll 取反、左右眼视线交换（`src/mirror.js`）。照片 / 视频预览不镜像，调用方不传 `mirror`。
-
-**摄像头方向修正（2026-10-21）**：部分笔记本摄像头（如华为 `FHD Camera (5959:0107)`）传感器倒装，
-`getUserMedia` 没有方向元数据。`input.js` 按设备标签默认 180°，ZONE 01 卡脚提供「画面翻转」按钮，
-按 `deviceId` 记住选择。开启时：视频预览加 `rotate-180`（与 `.mirrored` 组合成上下翻转），
-推理改用 180° 转正后的 canvas；网格使用转正后的 landmark、不再额外旋转，因此三者方向一致。
+head yaw / roll 取反、左右眼视线交换；head pitch 统一取反（`facialTransformationMatrix` 的 pitch 方向与
+VRM head 骨骼相反，否则抬头会变成低头）。规则集中在 `src/mirror.js`，照片 / 视频只做 pitch 修正。
 
 ### 8.6 读数条（readout.js）
 
