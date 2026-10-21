@@ -1,13 +1,13 @@
 // 状态机与组装：landing / stage(camera|photo|video)
 // 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
-import { Avatar } from "./avatar.js?v=8";
-import { MeshOverlay } from "./mesh.js?v=8";
-import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=8";
-import { SourceInput } from "./input.js?v=8";
-import { poseMetrics, handMetrics } from "./metrics.js?v=8";
-import * as perception from "./perception.js?v=8";
-import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=8";
-import { createBenchmarkPanel } from "./benchmark.js?v=8";
+import { Avatar } from "./avatar.js?v=9";
+import { MeshOverlay } from "./mesh.js?v=9";
+import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=9";
+import { SourceInput } from "./input.js?v=9";
+import { poseMetrics, handMetrics } from "./metrics.js?v=9";
+import * as perception from "./perception.js?v=9";
+import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=9";
+import { createBenchmarkPanel } from "./benchmark.js?v=9";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -228,13 +228,13 @@ function flatLandmarks(lm) {
   return lm; // 已是 flat
 }
 
-function applyFrame({ blendshapes, headEuler, landmarks }, { advanceReadout = true } = {}) {
+function applyFrame({ blendshapes, headEuler, landmarks }, { advanceReadout = true, mirror = false } = {}) {
   const facePresent = !!landmarks;
   if (facePresent) {
     lastFacePresentAt = performance.now();
     els.nofaceBadge.hidden = true;
-    avatar.setBlendshapes(blendshapes);
-    if (headEuler) avatar.setHeadEuler(headEuler);
+    avatar.setBlendshapes(blendshapes, { mirror });
+    if (headEuler) avatar.setHeadEuler(headEuler, { mirror });
     els.renderIdle.hidden = true;
   }
   mesh.draw(facePresent ? flatLandmarks(landmarks) : null);
@@ -326,7 +326,7 @@ async function cameraLoop() {
       try {
         const frame = perception.toFrame(faceLmVideo.detectForVideo(video, performance.now()));
         frameCount++;
-        if (frame) applyFrame(frame);
+        if (frame) applyFrame(frame, { mirror: true });
         else {
           mesh.clear();
           readout.update([], {}); // 零值推进，轨道不冻结
@@ -518,10 +518,10 @@ async function boot() {
   bench = createBenchmarkPanel({
     ensureAvatar: ensureAvatarLoaded,
     // benchmark 只驱动皮套人，不干扰 ZONE 01 的网格 / 读数
-    applyFrame: (frame) => {
+    applyFrame: (frame, opts = {}) => {
       if (!frame) return;
-      avatar.setBlendshapes(frame.blendshapes);
-      if (frame.headEuler) avatar.setHeadEuler(frame.headEuler);
+      avatar.setBlendshapes(frame.blendshapes, opts);
+      if (frame.headEuler) avatar.setHeadEuler(frame.headEuler, opts);
     },
     getLandmarker: () => faceLmVideo,
     getAvatar: () => avatar,

@@ -2,7 +2,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=8";
+import { Rig } from "./rig.js?v=9";
+import { mirrorHeadEuler, pickGaze } from "./mirror.js?v=9";
 
 function bs(scoreMap, name) {
   return scoreMap.get(name) ?? 0;
@@ -18,6 +19,7 @@ export class Avatar {
     this._headCur = { x: 0, y: 0, z: 0 };
     this._lastCats = null;
     this._lastHeadEuler = null;
+    this._lastMirror = false;
     // 性能埋点：渲染循环的真实耗时（benchmark 读取）
     this.lastTiming = { rigMs: 0, renderMs: 0, totalMs: 0 };
     this.renderedFrames = 0;
@@ -117,8 +119,8 @@ export class Avatar {
     this.ready = true;
     this._headTarget = { x: 0, y: 0, z: 0 };
     this._headCur = { x: 0, y: 0, z: 0 };
-    if (this._lastCats) this.setBlendshapes(this._lastCats);
-    if (this._lastHeadEuler) this.setHeadEuler(this._lastHeadEuler);
+    if (this._lastCats) this.setBlendshapes(this._lastCats, { mirror: this._lastMirror });
+    if (this._lastHeadEuler) this.setHeadEuler(this._lastHeadEuler, { mirror: this._lastMirror });
 
     if (old) {
       this.scene.remove(old.scene);
@@ -193,9 +195,11 @@ export class Avatar {
   }
 
   // cats: [{categoryName, score}]（后端契约原样）
-  setBlendshapes(cats) {
+  // mirror: 摄像头预览是镜像的；只交换左右视线，不改原始读数
+  setBlendshapes(cats, { mirror = false } = {}) {
     if (!cats) return;
     this._lastCats = cats;
+    this._lastMirror = mirror;
     if (!this.vrm) return;
     const E = this.vrm.expressionManager;
     if (!E) return;
@@ -217,21 +221,25 @@ export class Avatar {
       E.setValue("surprise", clamp(browUp * 0.6 + jaw * 0.4));
       E.setValue("lookUp", clamp(bs(m, "eyeLookUpLeft")));
       E.setValue("lookDown", clamp(bs(m, "eyeLookDownLeft")));
-      E.setValue("lookLeft", clamp(bs(m, "eyeLookOutLeft")));
-      E.setValue("lookRight", clamp(bs(m, "eyeLookOutRight")));
+      const gaze = pickGaze(cats, mirror);
+      E.setValue("lookLeft", clamp(gaze.left));
+      E.setValue("lookRight", clamp(gaze.right));
     } catch {}
   }
 
-  // headEuler: {x, y, z} 度（solvePnP 近似值，只做小角度跟随）
-  setHeadEuler(headEuler) {
+  // headEuler: {x, y, z} 度（facialTransformationMatrix 提取值，只做小角度跟随）
+  // mirror: 摄像头预览是镜像的，yaw / roll 取反；pitch 不受水平镜像影响
+  setHeadEuler(headEuler, { mirror = false } = {}) {
     if (!headEuler) return;
     this._lastHeadEuler = headEuler;
+    this._lastMirror = mirror;
+    const e = mirror ? mirrorHeadEuler(headEuler) : headEuler;
     const rad = (d) => (d * Math.PI) / 180;
     const cap = (v) => Math.max(-0.5, Math.min(0.5, v));
     this._headTarget = {
-      x: cap(rad(headEuler.x) * 0.4),
-      y: cap(rad(headEuler.y) * 0.5),
-      z: cap(rad(headEuler.z) * 0.3),
+      x: cap(rad(e.x) * 0.4),
+      y: cap(rad(e.y) * 0.5),
+      z: cap(rad(e.z) * 0.3),
     };
   }
 
@@ -252,6 +260,7 @@ export class Avatar {
     this._headTarget = { x: 0, y: 0, z: 0 };
     this._headCur = { x: 0, y: 0, z: 0 };
     this._lastHeadEuler = null;
+    this._lastMirror = false;
   }
 }
 
