@@ -1,13 +1,13 @@
 // 状态机与组装：landing / stage(camera|photo|video)
 // 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
-import { Avatar } from "./avatar.js?v=11";
-import { MeshOverlay } from "./mesh.js?v=11";
-import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=11";
-import { SourceInput } from "./input.js?v=11";
-import { poseMetrics, handMetrics } from "./metrics.js?v=11";
-import * as perception from "./perception.js?v=11";
-import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=11";
-import { createBenchmarkPanel } from "./benchmark.js?v=11";
+import { Avatar } from "./avatar.js?v=12";
+import { MeshOverlay } from "./mesh.js?v=12";
+import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=12";
+import { SourceInput } from "./input.js?v=12";
+import { poseMetrics, handMetrics } from "./metrics.js?v=12";
+import * as perception from "./perception.js?v=12";
+import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=12";
+import { createBenchmarkPanel } from "./benchmark.js?v=12";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -228,12 +228,12 @@ function flatLandmarks(lm) {
   return lm; // 已是 flat
 }
 
-function applyFrame({ blendshapes, headEuler, landmarks }, { advanceReadout = true, mirror = false } = {}) {
+function applyFrame({ blendshapes, headEuler, landmarks }, { advanceReadout = true, mirror = false, snap = false } = {}) {
   const facePresent = !!landmarks;
   if (facePresent) {
     lastFacePresentAt = performance.now();
     els.nofaceBadge.hidden = true;
-    avatar.setBlendshapes(blendshapes, { mirror });
+    avatar.setBlendshapes(blendshapes, { mirror, snap });
     if (headEuler) avatar.setHeadEuler(headEuler, { mirror });
     els.renderIdle.hidden = true;
   }
@@ -356,7 +356,7 @@ async function startPhoto(file) {
       setStatus("没有检测到人脸，换一张试试");
       return;
     }
-    applyFrame(frame);
+    applyFrame(frame, { snap: true });
     setStatus("photo · 本地推理完成");
   } catch (e) {
     setStatus(String(e.message || e));
@@ -398,7 +398,7 @@ function onVideoTime() {
     else hi = mid - 1;
   }
   if (best >= 0 && t - videoFrames[best].timestampMs < 600) {
-    applyFrame(videoFrames[best], { advanceReadout: false });
+    applyFrame(videoFrames[best], { advanceReadout: false, snap: true });
   }
   readout.renderPlayback(videoFrames, t); // 读数轴跟随视频进度（可回拖）
 }

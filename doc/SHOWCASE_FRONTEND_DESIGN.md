@@ -231,6 +231,7 @@
 | 模块 | 职责 | 输入 → 输出 |
 |---|---|---|
 | `input.js` | 三种来源统一为「帧序列」 | 摄像头流 / 图片 / 视频 → 逐帧 `HTMLVideoElement` 或 `ImageBitmap` |
+| `vrm_face/facemap.mjs` | P0-1 preset 映射（vendored） | 52 ARKit → 运行时 VRM expression + lookAt |
 | `perception.js` | MediaPipe FaceLandmarker 推理 | 帧 → `{ landmarks: (478,3), blendshapes: (52,) }` |
 | `mesh.js` | 网格叠加绘制 | landmarks → 2D canvas 点线 |
 | `avatar.js` | 皮套人驱动 | blendshapes → VRM expression |
@@ -244,7 +245,14 @@
 - 模型文件：`face_landmarker.task`（**仓库已有**，3.6 MB，直接拷过来用）。
 - 产出：每帧 478 个关键点（含 x/y/z）+ 52 个 BlendShape 分数（含 `categoryName` 与 `score`）。
 
-### 8.3 BlendShape → VRM 映射表（**直接照搬，已验证**）
+### 8.3 BlendShape → VRM 映射
+
+> **2026-10-21 更新（P0-1）**：下表是早期硬编码实现，已被 `src/vrm_face/facemap.mjs` 取代。
+> 实际 expression 名称按运行时 `expressionMap` 解析（`happy` / `sad` / `Surprised` / `relaxed`），
+> 不再写 `joy` / `sorrow` / `surprise`。摄像头使用 30 帧中性校准 + 平滑；照片 / 视频使用无校准的 snap mapper。
+> 视线优先写骨骼 `vrm.lookAt.yaw/pitch`（`applier.constructor.type === "bone"`），并关闭 `autoUpdate`。
+
+早期映射表（仅作语义参考）：
 
 以下映射来自仓库 `viewer/index.html` 的 `applyFace`，已实测能驱动 VRM，**逐条照抄，不要重造**：
 
