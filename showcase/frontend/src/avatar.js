@@ -2,13 +2,9 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=11";
-import { mapHeadEuler, pickGaze } from "./mirror.js?v=11";
-
-function bs(scoreMap, name) {
-  return scoreMap.get(name) ?? 0;
-}
-const clamp = (v) => Math.max(0, Math.min(1, v));
+import { Rig } from "./rig.js?v=12";
+import { mapHeadEuler } from "./mirror.js?v=12";
+import { buildProfile, FaceMapper } from "./vrm_face/facemap.mjs?v=12";
 
 export class Avatar {
   constructor(canvas) {
@@ -20,6 +16,12 @@ export class Avatar {
     this._lastCats = null;
     this._lastHeadEuler = null;
     this._lastMirror = false;
+    this._lastSnap = false;
+    this._lastBlendAt = 0;
+    this.faceProfile = null;
+    this.faceMapper = null;
+    this.snapMapper = null;
+    this.lastMapping = null;
     // 性能埋点：渲染循环的真实耗时（benchmark 读取）
     this.lastTiming = { rigMs: 0, renderMs: 0, totalMs: 0 };
     this.renderedFrames = 0;
@@ -116,10 +118,11 @@ export class Avatar {
     this.vrm = vrm;
     this.scene.add(vrm.scene);
     this.rig = new Rig(vrm);
+    this._buildFaceMappers(vrm);
     this.ready = true;
     this._headTarget = { x: 0, y: 0, z: 0 };
     this._headCur = { x: 0, y: 0, z: 0 };
-    if (this._lastCats) this.setBlendshapes(this._lastCats, { mirror: this._lastMirror });
+    if (this._lastCats) this.setBlendshapes(this._lastCats, { mirror: this._lastMirror, snap: this._lastSnap });
     if (this._lastHeadEuler) this.setHeadEuler(this._lastHeadEuler, { mirror: this._lastMirror });
 
     if (old) {
@@ -129,6 +132,33 @@ export class Avatar {
       } catch {}
     }
     return vrm;
+  }
+
+  // 按当前 VRM 的运行时能力建立 preset 映射器。
+  // faceMapper：摄像头连续帧，带 30 帧中性校准与非对称平滑。
+  // snapMapper：照片 / 视频稀疏帧，不做校准与平滑，直接得到当前帧表情。
+  _buildFaceMappers(vrm) {
+    const morphTargets = [];
+    vrm.scene.traverse((object) => {
+      if (object.isMesh && object.morphTargetDictionary) {
+        for (const name of Object.keys(object.morphTargetDictionary)) morphTargets.push(name);
+      }
+    });
+    const expressions = Object.keys(vrm.expressionManager?.expressionMap ?? {});
+    // three-vrm 3.5 的 applier.type 是静态属性（实例上没有），必须读 constructor.type。
+    // 没有骨骼 lookAt 的模型交给 buildProfile("auto")，有 look* expression 时回退到 expression。
+    const lookAtType = vrm.lookAt
+      ? (vrm.lookAt.applier?.constructor?.type ?? "none")
+      : "auto";
+    const format = vrm.meta?.metaVersion === "1" ? "VRM1" : "VRM0";
+    this.faceProfile = buildProfile({ expressions, morphTargets, lookAtType, format });
+    this.faceMapper = new FaceMapper(this.faceProfile);
+    this.snapMapper = new FaceMapper(this.faceProfile, {
+      calibrationFrames: 0,
+      smoothing: false,
+    });
+    if (vrm.lookAt) vrm.lookAt.autoUpdate = false;
+    this.lastMapping = null;
   }
 
   // poseImage / poseWorld: flat 33×4；hands: {left, right} flat 21×3
@@ -195,36 +225,42 @@ export class Avatar {
   }
 
   // cats: [{categoryName, score}]（后端契约原样）
-  // mirror: 摄像头预览是镜像的；只交换左右视线，不改原始读数
-  setBlendshapes(cats, { mirror = false } = {}) {
+  // mirror: 摄像头预览是镜像的；snap: 照片/视频单帧，跳过校准与平滑
+  setBlendshapes(cats, { mirror = false, snap = false } = {}) {
     if (!cats) return;
     this._lastCats = cats;
     this._lastMirror = mirror;
+    this._lastSnap = snap;
     if (!this.vrm) return;
     const E = this.vrm.expressionManager;
     if (!E) return;
-    const m = new Map(cats.map((c) => [c.categoryName, c.score]));
-    const blink = Math.max(bs(m, "eyeBlinkLeft"), bs(m, "eyeBlinkRight"));
-    const jaw = bs(m, "jawOpen");
-    const smile = Math.max(bs(m, "mouthSmileLeft"), bs(m, "mouthSmileRight"));
-    const frown = Math.max(bs(m, "mouthFrownLeft"), bs(m, "mouthFrownRight"));
-    const browDown = Math.max(bs(m, "browDownLeft"), bs(m, "browDownRight"));
-    const browUp = Math.max(
-      bs(m, "browInnerUp"), bs(m, "browOuterUpLeft"), bs(m, "browOuterUpRight")
-    );
+    const mapper = snap ? this.snapMapper : this.faceMapper;
+    if (!mapper) return;
+
+    const now = performance.now();
+    const dt = this._lastBlendAt
+      ? Math.min(0.25, Math.max(1 / 240, (now - this._lastBlendAt) / 1000))
+      : 1 / 30;
+    this._lastBlendAt = now;
+
+    let out;
     try {
-      E.setValue("blink", clamp(blink));
-      E.setValue("aa", clamp(jaw));
-      E.setValue("joy", clamp(smile));
-      E.setValue("sorrow", clamp(frown));
-      E.setValue("angry", clamp(browDown));
-      E.setValue("surprise", clamp(browUp * 0.6 + jaw * 0.4));
-      E.setValue("lookUp", clamp(bs(m, "eyeLookUpLeft")));
-      E.setValue("lookDown", clamp(bs(m, "eyeLookDownLeft")));
-      const gaze = pickGaze(cats, mirror);
-      E.setValue("lookLeft", clamp(gaze.left));
-      E.setValue("lookRight", clamp(gaze.right));
-    } catch {}
+      out = mapper.update(cats, { dt, mirror });
+    } catch {
+      return;
+    }
+
+    for (const [name, weight] of Object.entries(out.expressions ?? {})) {
+      try {
+        E.setValue(name, weight);
+      } catch {}
+    }
+    if (out.lookAt?.mode === "bone" && this.vrm.lookAt) {
+      this.vrm.lookAt.autoUpdate = false;
+      this.vrm.lookAt.yaw = out.lookAt.yaw;
+      this.vrm.lookAt.pitch = out.lookAt.pitch;
+    }
+    this.lastMapping = out.meta;
   }
 
   // headEuler: {x, y, z} 度（facialTransformationMatrix 提取值，只做小角度跟随）
@@ -243,24 +279,29 @@ export class Avatar {
     };
   }
 
-  // 复位：骨骼回标准姿态、表情清零、头部跟随复位、位移归零（停止演示时调用）
+  // 复位：骨骼回标准姿态、表情清零、视线复位、头部跟随复位（停止演示时调用）
   resetPose() {
     if (!this.vrm) return;
     try {
       this.vrm.humanoid.resetNormalizedPose();
     } catch {}
     this.vrm.scene.position.set(0, 0, 0);
-    const E = this.vrm.expressionManager;
-    if (E) {
-      for (const name of ["blink", "aa", "joy", "sorrow", "angry", "surprise",
-                          "lookUp", "lookDown", "lookLeft", "lookRight"]) {
-        try { E.setValue(name, 0); } catch {}
-      }
-    }
+    try {
+      this.vrm.expressionManager?.resetValues();
+    } catch {}
+    this.faceMapper?.reset();
+    this.snapMapper?.reset();
+    try {
+      this.vrm.lookAt?.reset();
+    } catch {}
     this._headTarget = { x: 0, y: 0, z: 0 };
     this._headCur = { x: 0, y: 0, z: 0 };
     this._lastHeadEuler = null;
     this._lastMirror = false;
+    this._lastCats = null;
+    this._lastSnap = false;
+    this._lastBlendAt = 0;
+    this.lastMapping = null;
   }
 }
 

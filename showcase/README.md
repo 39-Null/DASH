@@ -25,6 +25,18 @@ Python 后端（`backend/`）保留为开发调试工具与旧 fusion 链路，�
 左右眼视线交换；head pitch 统一取反（facialTransformationMatrix 的 pitch 方向与 VRM head 骨骼相反）。
 照片 / 视频预览不镜像，只做 pitch 修正。规则集中在 `src/mirror.js`。
 
+## 面部映射（P0-1）
+
+- `src/vrm_face/facemap.mjs` 是从 `tools/vrm_face/facemap.mjs` vendored 的纯 ES module（P0-1），
+  `avatar.js` 直接引用；同步时保持文件内容一致。
+- 按运行时 `expressionMap` 解析实际名称：`happy` / `sad` / `Surprised` / `relaxed` / `aa/ih/ou/ee/oh`，
+  不再硬编码 `joy/sorrow/surprise`。
+- 摄像头连续帧使用 `FaceMapper`：30 帧中性校准 + 非对称平滑；照片 / 视频使用无校准、无平滑的
+  `snapMapper`，避免单帧被当成中性样本。
+- 视线优先写入骨骼 `vrm.lookAt.yaw/pitch`，并设置 `autoUpdate = false`；没有骨骼 lookAt 时回退到 look expression。
+  注意 three-vrm 3.5 的 `applier.type` 是**静态属性**，接入层读的是 `applier.constructor.type`。
+- P0-2 custom expression（`morphscan.mjs`）尚未启用，留待 preset 稳定后接入。
+
 ## 性能测试（ZONE 03）
 
 页面在皮套人预览与「了解更多」之间提供一键性能测试：

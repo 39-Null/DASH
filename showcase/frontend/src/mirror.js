@@ -2,7 +2,7 @@
 // 驱动 VRM 前需要修正两件事：
 //   - head pitch 取反：facialTransformationMatrix 的 pitch 方向与 VRM head 骨骼相反
 //     （实测抬头会变成低头，因此 x 统一取负）
-//   - 摄像头镜像时 yaw / roll 取反，并交换左右眼视线
+//   - 摄像头镜像时 yaw / roll 取反；分眼眨眼与视线的镜像由 facemap 的 mirror 参数负责
 // 照片 / 视频预览不镜像，调用方不要传 mirror。
 export function mapHeadEuler(headEuler, { mirror = false } = {}) {
   if (!headEuler) return headEuler;
@@ -11,17 +11,4 @@ export function mapHeadEuler(headEuler, { mirror = false } = {}) {
     y: mirror ? -headEuler.y : headEuler.y,
     z: mirror ? -headEuler.z : headEuler.z,
   };
-}
-
-// cats: [{categoryName, score}]；返回镜像后的 lookLeft / lookRight 分数
-export function pickGaze(cats, mirror) {
-  let left = 0;
-  let right = 0;
-  if (cats) {
-    for (const c of cats) {
-      if (c.categoryName === "eyeLookOutLeft") left = c.score;
-      else if (c.categoryName === "eyeLookOutRight") right = c.score;
-    }
-  }
-  return mirror ? { left: right, right: left } : { left, right };
 }
