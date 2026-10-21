@@ -2,7 +2,8 @@
 
 > 日期：2026-10-21
 > 范围：模型线调研。只读代码与模型资产，不修改展示线实现。
-> 结论先行：当前代码写入了 10 个 preset 名称，但在仓库现有 VRM 0.x 资产上实际只有 3 个生效。最小修复不需要改模型，先把名称解析、左右眼、视线骨骼和中性校准做对；第二步再用现有资产中大量未被 preset 使用的 morph target 生成运行时 custom expression。
+> 状态说明（2026-10-21 补记）：P0-1/P0-2 已由 PR #22/#23 落地并接入展示线。第 2 节保留为落地前的基线，用于解释动机；当前实现见附录 C。
+> 结论先行：P0-1 落地前，代码写入了 10 个 preset 名称，但在仓库现有 VRM 0.x 资产上实际只有 3 个生效。最小修复不需要改模型，先把名称解析、左右眼、视线骨骼和中性校准做对；第二步再用现有资产中大量未被 preset 使用的 morph target 生成运行时 custom expression。
 
 ---
 
@@ -10,18 +11,18 @@
 
 ### 0.1 五个主要结论
 
-1. **现状不是「约 10 个 preset 生效」，而是「3 个 preset 生效」。**
-   代码调用 `joy`、`sorrow`、`surprise`，但 three-vrm 3.5.3 在导入 VRM 0.x 时会把它们重命名为 `happy`、`sad`，而 `Surprised` 会保留组名首字母大写。`setValue` 对不存在的名称静默无效，所以这三个调用不会报错，也不会产生表情。
+1. **P0-1 落地前，现状不是「约 10 个 preset 生效」，而是「3 个 preset 生效」。**
+   当时代码调用 `joy`、`sorrow`、`surprise`，但 three-vrm 3.5.3 在导入 VRM 0.x 时会把它们重命名为 `happy`、`sad`，而 `Surprised` 会保留组名首字母大写。`setValue` 对不存在的名称静默无效，所以这三个调用不会报错，也不会产生表情。该问题已由 #22 修复。
 
-2. **视线通道目前基本是空的。**
-   仓库内 9 个 VRM 全部是 VRM 0.x，`firstPerson.lookAtTypeName` 全部为 `Bone`。默认模型 `three-vrm-girl.vrm` 的 `lookUp`、`lookDown`、`lookLeft`、`lookRight` 四个 expression 的 bind 数为 0；`sample-a`、`sample-b` 根本没有这四个组。当前代码用 `setValue("lookUp", ...)` 驱动视线，在这些资产上不会产生效果。正确入口是 `vrm.lookAt.yaw/pitch`，它会驱动左右眼骨骼。
+2. **P0-1 落地前，视线通道基本是空的。**
+   仓库内 9 个 VRM 全部是 VRM 0.x，`firstPerson.lookAtTypeName` 全部为 `Bone`。默认模型 `three-vrm-girl.vrm` 的 `lookUp`、`lookDown`、`lookLeft`、`lookRight` 四个 expression 的 bind 数为 0；`sample-a`、`sample-b` 根本没有这四个组。当时代码用 `setValue("lookUp", ...)` 驱动视线，在这些资产上不会产生效果。正确入口是 `vrm.lookAt.yaw/pitch`，它会驱动左右眼骨骼；该入口已由 #22 接入。
 
 3. **现有资产的可挖掘空间比想象中大。**
    `sample-a.vrm` 有 56 个 morph target，其中只有 16 个被 preset expression 绑定，剩余 40 个未被使用；其中约 25 个是面部相关（`BRW_*`、`EYE_*`、`MTH_*`）。`sample-b`、`three-vrm-girl` 的情况类似。也就是说，不重新做模型，也可以在运行时用这些已存在的 morph target 组合出更多 ARKit 维度。
 
-4. **推荐先做两条，均不需要改模型资产。**
-   - P0-1：preset 直映射修正。按运行时 `expressionMap` 解析名称，恢复 `happy`、`sad`、`Surprised`、`relaxed`、`ih/ou/ee/oh`、`blinkLeft/Right`；视线改走 `vrm.lookAt`；加中性基线校准与轻量平滑。
-   - P0-2：自动扫描 morph target，生成运行时 custom expression。先在 `sample-a/b` 上覆盖约 15-20 个可解释维度，再逐步扩展。
+4. **P0-1/P0-2 已落地；当时的推荐是先做两条，均不需要改模型资产。**
+   - P0-1：preset 直映射修正。按运行时 `expressionMap` 解析名称，恢复 `happy`、`sad`、`Surprised`、`relaxed`、`ih/ou/ee/oh`、`blinkLeft/Right`；视线改走 `vrm.lookAt`；加中性基线校准与轻量平滑。已由 #22 实现。
+   - P0-2：自动扫描 morph target，生成运行时 custom expression。先在 `sample-a/b` 上覆盖约 15-20 个可解释维度，再逐步扩展。已由 #23 实现。
    这两条合起来，预期把有效表情维度从 3 提升到 10 左右，再提升到 15-20，帧预算增加小于 0.5 ms。
 
 5. **学习式映射现在不值得做。**
@@ -31,12 +32,14 @@
 
 | 优先级 | 内容 | 理由 |
 |---|---|---|
-| P0-1 | preset 直映射修正（名称解析、左右眼、视线骨骼、中性校准、平滑） | 当前有明确的静默失效；改动小、收益立即可见、无资产依赖 |
-| P0-2 | 自动扫描 morph target + 运行时 custom expression | 现有资产已有大量未使用 morph target；不需要重新建模 |
+| P0-1 | preset 直映射修正（名称解析、左右眼、视线骨骼、中性校准、平滑） | P0-1 落地前有明确的静默失效；改动小、收益立即可见、无资产依赖。已由 #22 修复 |
+| P0-2 | 自动扫描 morph target + 运行时 custom expression | 现有资产已有大量未使用 morph target；不需要重新建模。已由 #23 实现 |
 | P1 | PerfectSync 离线资产（52 个 ARKit BlendShape/expression） | 质量上限最高，但需要 Blender/UniVRM/Hana 工具链与授权确认 |
 | P1 | VRM 1.0 迁移与 overrideMouth/overrideBlink | 未来资产更干净，但当前 9 个资产全是 VRM 0.x，短期无法验证 |
 | P2 | 学习式 52 -> N 映射 | 数据瓶颈明显；推理成本不是问题，监督信号才是问题 |
 | P2 | 更深的工具链集成（Hana、NEB、VRCFaceTracking 映射表） | 作为参考和离线资产管线，不是当前运行时瓶颈 |
+
+P0-1、P0-2 均已由 #22/#23 落地；下表的 P1/P2 仍待评估。
 
 ---
 
@@ -81,6 +84,8 @@
 
 ## 2. 现状核对
 
+> 说明：2.2、2.3.2、2.5、2.6 记录的是 P0-1/P0-2 落地前（#22/#23 之前）的基线，用于解释为什么要做 P0；当前实现见附录 C。
+
 ### 2.1 52 维契约
 
 `showcase/backend/contract.py` 定义了固定顺序的 52 项：
@@ -116,9 +121,9 @@ BLENDSHAPE_NAMES = [
 1. `_neutral` 是 MediaPipe 的类别名，不是 Apple ARKit 的 52 个表情通道之一。它可以作为「中性置信度/门控」使用，但不应该直接驱动 VRM 的 `neutral` expression。
 2. 除 `_neutral` 外，其余 51 个名称与 ARKit 的命名基本一致，可以作为 PerfectSync 的通道名基础。
 
-### 2.2 当前映射实现
+### 2.2 P0-1 落地前的映射实现（历史基线）
 
-`showcase/frontend/src/avatar.js` 的 `setBlendshapes()` 在 199-228 行：
+#22 之前，`showcase/frontend/src/avatar.js` 的 `setBlendshapes()` 在约 199-228 行是下面这样；当前实现已改为 `vrm_face/facemap.mjs` + `FaceMapper`。
 
 ```js
 const blink = Math.max(bs(m, "eyeBlinkLeft"), bs(m, "eyeBlinkRight"));
@@ -141,15 +146,15 @@ E.setValue("lookLeft", clamp(gaze.left));
 E.setValue("lookRight", clamp(gaze.right));
 ```
 
-代码读取了 16 个不同通道：
+当时代码读取了 16 个不同通道：
 
 `eyeBlinkLeft/Right`、`jawOpen`、`mouthSmileLeft/Right`、`mouthFrownLeft/Right`、`browDownLeft/Right`、`browInnerUp`、`browOuterUpLeft/Right`、`eyeLookUpLeft`、`eyeLookDownLeft`、`eyeLookOutLeft/Right`。
 
-经过 `max` 合并后，写入了 10 个 preset 名称：
+经过 `max` 合并后，当时写入了 10 个 preset 名称：
 
 `blink`、`aa`、`joy`、`sorrow`、`angry`、`surprise`、`lookUp`、`lookDown`、`lookLeft`、`lookRight`。
 
-`mirror` 只影响 `pickGaze()` 返回的左右视线，没有影响左右眼 blink、左右嘴角等横向通道。
+当时的 `mirror` 只影响 `pickGaze()` 返回的左右视线，没有影响左右眼 blink、左右嘴角等横向通道；`pickGaze()` 已在 #22 中移除，视线逻辑现在位于 `vrm_face/facemap.mjs` 的 `_gaze()`。
 
 ### 2.3 资产事实
 
@@ -202,7 +207,7 @@ sample-b.vrm ->
   angry, relaxed, happy, sad, Surprised
 ```
 
-#### 2.3.2 当前代码在这些名称上的实际效果
+#### 2.3.2 P0-1 落地前代码在这些名称上的实际效果
 
 | 代码写入 | 资产中的实际名称 | 结果 |
 |---|---|---|
@@ -217,7 +222,7 @@ sample-b.vrm ->
 | `lookLeft` | `lookLeft`（仅 girl，且 0 bind） | 无效 |
 | `lookRight` | `lookRight`（仅 girl，且 0 bind） | 无效 |
 
-因此，**当前在所有主要资产上实际生效的只有 `blink`、`aa`、`angry` 三个**。`angry` 还是由 `browDown` 驱动的全脸 `ALL_Angry`，会把嘴部也一起带起来。
+因此，**P0-1 落地前，在所有主要资产上实际生效的只有 `blink`、`aa`、`angry` 三个**。`angry` 还是由 `browDown` 驱动的全脸 `ALL_Angry`，会把嘴部也一起带起来。该问题已由 #22 修复：当前实现按运行时 `expressionMap` 解析名称，并写入 `happy/sad/Surprised/relaxed/ih/ou/ee/oh/blinkLeft/Right`。
 
 `expressionManager.setValue()` 的实现是：
 
@@ -311,7 +316,7 @@ setValue(name, weight) {
 - 运行时注入 custom expression 所需的 `VRMExpression`、`VRMExpressionMorphTargetBind` 已在模块导出列表中。
 - 因此不需要为了这些方案升级 three-vrm；升级与否主要取决于其他依赖，不取决于本任务。
 
-### 2.5 视线：当前代码走错了入口
+### 2.5 视线：P0-1 落地前走错了入口
 
 `sample-a`、`sample-b`、`three-vrm-girl` 的 `firstPerson` 都是：
 
@@ -335,9 +340,9 @@ vrm.lookAt.yaw = yawDeg;
 vrm.lookAt.pitch = pitchDeg;
 ```
 
-`vrm.update(delta)` 会在每帧调用 `lookAt.update()`，把 yaw/pitch 应用到眼骨。当前 `avatar.js` 从未设置 `vrm.lookAt`，只调用空的 `look*` expression，所以视线完全丢失。
+`vrm.update(delta)` 会在每帧调用 `lookAt.update()`，把 yaw/pitch 应用到眼骨。P0-1 落地前，`avatar.js` 从未设置 `vrm.lookAt`，只调用空的 `look*` expression，所以视线完全丢失；该问题已由 #22 修复，当前 `avatar.js` 会设置 `lookAt.autoUpdate = false` 并写入 yaw/pitch。
 
-此外，`mirror.js` 的 `pickGaze()` 只用了 `eyeLookOutLeft` 和 `eyeLookOutRight`：
+此外，当时 `mirror.js` 的 `pickGaze()`（现已移除）只用了 `eyeLookOutLeft` 和 `eyeLookOutRight`：
 
 ```js
 if (c.categoryName === "eyeLookOutLeft") left = c.score;
@@ -357,18 +362,18 @@ pitch     = (gazeUp - gazeDown) * MAX_PITCH
 
 具体符号需要按模型和镜像方向做一次 A/B 核对，但入口必须是 `vrm.lookAt`，而不是空的 `look*` expression。
 
-### 2.6 其他现状问题
+### 2.6 其他历史基线问题（P0-1 落地前）与当前状态
 
-| 问题 | 证据 | 影响 |
+| 问题 | 证据（P0-1 落地前） | 当前状态 |
 |---|---|---|
-| 左右取 `max` | `blink`、`smile`、`frown`、`browDown`、`browUp` 全部取 max | 丢失左右眼异步眨眼、单侧嘴角、单侧眉动 |
-| `browUp` 把语义不同的通道取 max | `browInnerUp` 与 `browOuterUpLeft/Right` 不是同一动作 | 眉毛动作失真 |
-| 无权重归一 | 每个 expression 单独 clamp，但多个 expression 会叠加 | 多个情绪/口型同时激活时过驱动 |
-| 无中性校准 | 前端没有 calibrate 逻辑；设计文档已记录中性基线 0.09-0.20 | 静止时持续轻微扭曲 |
-| 无表情时序平滑 | 只有头部有 `k=0.18` 的指数平滑 | 表情抖动，眨眼可能被过度平滑或不够快 |
-| 复位硬编码 | `resetPose()` 只清 10 个名称，且包含已失效的 `joy/sorrow/surprise` | 新增 expression 后复位不干净；应使用 `resetValues()` |
-| 映射耗时未单独计量 | `benchmark.js` 的 `applyMs` 包含 `toFrame` + `setBlendshapes` | 无法判断新映射层的 CPU 成本 |
-| 设计文档的「照搬」结论需要修正 | `SHOWCASE_FRONTEND_DESIGN.md` 8.3 节说「已实测能驱动 VRM，逐条照抄」 | 该表在 VRM 0.x 资产上存在名称失配；应以运行时 `expressionMap` 为准 |
+| 左右取 `max` | `blink`、`smile`、`frown`、`browDown`、`browUp` 全部取 max | `blink` 已改为分眼写入；`smile`/`frown`/`browDown` 仍取 max |
+| `browUp` 把语义不同的通道取 max | `browInnerUp` 与 `browOuterUpLeft/Right` 不是同一动作 | 仍存在；custom 模式建议改用 `BRW_*` 独立目标 |
+| 无权重归一 | 每个 expression 单独 clamp，但多个 expression 会叠加 | 已由 `facemap.mjs` 的 `normalizeGroup()` 处理口型组和情绪组 |
+| 无中性校准 | 前端没有 calibrate 逻辑；设计文档已记录中性基线 0.09-0.20 | 已加入 30 帧自动中性校准 |
+| 无表情时序平滑 | 只有头部有 `k=0.18` 的指数平滑 | 已加入非对称 EMA（attack/release 不同时间常数） |
+| 复位硬编码 | `resetPose()` 只清 10 个名称，且包含已失效的 `joy/sorrow/surprise` | 已改用 `expressionManager.resetValues()` |
+| 映射耗时未单独计量 | `benchmark.js` 的 `applyMs` 包含 `toFrame` + `setBlendshapes` | 仍未单独拆分，建议后续新增 `mappingMs` |
+| 设计文档的「照搬」结论需要修正 | `SHOWCASE_FRONTEND_DESIGN.md` 8.3 节说「已实测能驱动 VRM，逐条照抄」 | 仍建议以运行时 `expressionMap` 为准 |
 
 ---
 
@@ -521,7 +526,7 @@ PerfectSync 的核心不是「52 个新算法」，而是「模型侧有 52 个�
 | 可验证性 | 帧级顶点/权重对比、主观 A/B、端到端延迟 | 帧级权重对比、主观 A/B、端到端延迟 |
 | 优先级 | P1（主角模型） | P0-2 / P1 |
 
-补充：`sample-a` 的面部 mesh 约 2054 个顶点。52 个新 morph target 的 float32 位移数据约为 `2054 * 52 * 3 * 4 = 1.28 MB`，加上法线/切线/容器开销可能到 2-4 MB；对当前 13-15 MB 的资产不是数量级问题，但移动端加载和显存需要实测。
+补充：`sample-a` 的面部 mesh 约 2054 个顶点。52 个新 morph target 的 float32 位移数据约为 `2054 * 52 * 3 * 4 = 1.28 MB`，加上法线/切线/容器开销可能到 2-4 MB；对 sample-a/b 的 13-15 MB 资产不是数量级问题（默认 three-vrm-girl 约 5.5 MB），但移动端加载和显存需要实测。
 
 ---
 
@@ -741,13 +746,13 @@ landmarks -> Task 6 MLP -> 52 ARKit -> VRM 映射 -> expressions
 
 ## 5. 推荐排序与理由
 
-### 5.1 P0-1：preset 直映射修正
+### 5.1 P0-1：preset 直映射修正（已由 #22 落地）
 
-**为什么先做：**
+**为什么先做（当时的理由）：**
 
-1. 当前有明确的静默失效：`joy/sorrow/surprise` 在 VRM 0.x 上不生效；这不是「效果不够好」，而是「调用错了名字」。
-2. 视线完全丢失：所有资产都是 Bone 型 lookAt，当前却写空的 `look*` expression；改走 `vrm.lookAt` 可以立即恢复。
-3. 现有资产已经提供 `happy/sad/Surprised/relaxed/ih/ou/ee/oh/blinkLeft/Right`，只是代码没用；修复名称和映射后，有效维度可以从 3 提升到约 10。
+1. P0-1 落地前有明确的静默失效：`joy/sorrow/surprise` 在 VRM 0.x 上不生效；这不是「效果不够好」，而是「调用错了名字」。
+2. 视线完全丢失：所有资产都是 Bone 型 lookAt，当时却写空的 `look*` expression；改走 `vrm.lookAt` 可以立即恢复。
+3. 现有资产已经提供 `happy/sad/Surprised/relaxed/ih/ou/ee/oh/blinkLeft/Right`，只是当时代码没用；修复名称和映射后，有效维度可以从 3 提升到约 10。
 4. 不需要改模型、不需要新增依赖、帧预算增加可忽略。
 5. 它是后续所有方案的基础：per-model profile、custom expression、VRM 1.0 都需要正确的名称解析和校准。
 
@@ -760,15 +765,19 @@ landmarks -> Task 6 MLP -> 52 ARKit -> VRM 映射 -> expressions
 - `applyMs` 相比当前增加小于 0.5 ms；端到端 FPS 不低于 30。
 - 帧级 golden JSON 对比通过；主观 A/B 无回归。
 
-### 5.2 P0-2：自动扫描 + 运行时 custom expression
+**状态：** 已由 #22 实现并接入；实现见 `showcase/frontend/src/vrm_face/facemap.mjs`。
 
-**为什么第二做：**
+### 5.2 P0-2：自动扫描 + 运行时 custom expression（已由 #23 落地）
+
+**为什么第二做（当时的理由）：**
 
 1. `sample-a` 有 40 个未使用 morph target，其中约 25 个面部相关；不利用它们，52 维信息仍然大量丢失。
 2. 不需要重新建模，不需要 Hana/Blender，不需要改模型文件；只在运行时组合已有目标。
 3. 可以把当前的全脸 `ALL_*` 情绪拆成眉、眼、嘴的 granular 组合，减少「生气时嘴也一起变形」的问题。
 4. 与 P0-1 共用同一套 52 维输入、校准和平滑，工程上连续。
 5. 为后续 PerfectSync/VRM 1.0 提供 profile 格式和验证工具。
+
+**状态：** 已由 #23 实现并接入；实现见 `showcase/frontend/src/vrm_face/morphscan.mjs`，默认仍使用 preset 模式，custom 模式由展示线开关控制。
 
 **建议的 MVP 覆盖：**
 
@@ -845,7 +854,7 @@ const workMs = t1 - t0 + (t2 - t1) + timing.rigMs + timing.renderMs;
 ### 6.3 资产大小与 GPU 影响
 
 - 运行时 custom expression（b2）不新增几何，GPU morph 成本不变。
-- 离线 PerfectSync（b1）会给面部 mesh 增加 52 个 morph target。以 `sample-a` 的 2054 顶点估算，float32 位移约 1.28 MB；加上法线/切线/容器开销可能 2-4 MB。对当前 13-15 MB 资产不是数量级问题，但移动端加载时间和显存需要实测。
+- 离线 PerfectSync（b1）会给面部 mesh 增加 52 个 morph target。以 `sample-a` 的 2054 顶点估算，float32 位移约 1.28 MB；加上法线/切线/容器开销可能 2-4 MB。对 sample-a/b 的 13-15 MB 资产不是数量级问题（默认 three-vrm-girl 约 5.5 MB），但移动端加载时间和显存需要实测。
 - 如果模型原本已有 40-56 个目标，再加 52 个可能达到约 100 个目标。three.js 可以处理，但 shader 复杂度和移动端 GPU 成本需要基准测试。
 
 ---
@@ -943,15 +952,18 @@ const workMs = t1 - t0 + (t2 - t1) + timing.rigMs + timing.renderMs;
 
 ### 8.1 交付边界
 
-- 本报告只做调研，没有修改 `showcase/` 下任何文件。
-- `avatar.js` 属于展示线；后续实现需要与展示线窗口约定接口和合并顺序，避免两边同时改同一文件。
-- 模型线可以负责：
-  - `buildVrmProfile(vrm)`：扫描 morph target、读取 expressionMap、生成 per-model profile。
-  - `applyArkit(profile, scores, state)`：纯函数映射 + 校准 + 平滑，输出 expression 权重和 lookAt yaw/pitch。
-  - 离线 profile 生成/校验脚本。
-  - 帧级 golden 测试和诊断页。
-- 展示线负责：
-  - 在 `avatar.js` 中调用上述接口。
+- 调研阶段没有修改 `showcase/` 下任何文件；P0-1/P0-2 的实现随后由 #22/#23 接入展示线。
+- `avatar.js` 属于展示线；后续改动仍需与展示线窗口约定接口和合并顺序，避免两边同时改同一文件。
+- 模型线已提供（实际接口名）：
+  - `buildProfile({ expressions, morphTargets, lookAtType, format })`：解析运行时能力，生成 preset 映射 profile。
+  - `FaceMapper` / `CustomFaceMapper`：自动校准、平滑与 52 -> VRM 映射，输出 expression 权重和 lookAt yaw/pitch。
+  - `buildCustomProfile({ morphTargets, expressions, lookAtType, format })`：扫描 morph target，生成 custom expression profile。
+  - `groupBindsByMesh(meshes, profile)`：把 target 名称解析到实际 mesh/index。
+  - 帧级测试：`tools/vrm_face/*.test.mjs`。
+- 展示线已完成：
+  - 在 `avatar.js` 中调用上述接口，并在 `loadFromBlob` 后建立 profile/mapper。
+  - 加入 preset/custom 模式开关与 `resetValues()` 清理。
+- 展示线后续负责：
   - 把 `mappingMs`、`lookAtType` 等指标接入 benchmark UI。
   - 如果需要「校准」按钮，由展示线加 UI，模型线提供 API。
 
@@ -1067,9 +1079,10 @@ while off < len(data):
 ## 附录 C：P0-1 / P0-2 实现状态（2026-10-21）
 
 - P0-1 已实现：`tools/vrm_face/facemap.mjs`，覆盖 VRM 0.x/1.0 名称解析、分眼眨眼、骨骼视线、自动中性校准、分组归一、非对称平滑；18 项 Node 测试通过。
-- P0-2 已实现：`tools/vrm_face/morphscan.mjs`，扫描 `BRW_*` / `EYE_*` / `MTH_*`，生成运行时 custom expression profile；`sample-a` 生成 20 个，`sample-b` 与 `three-vrm-girl` 生成 21 个；19 项 Node 测试通过。
-- 两个模块都不依赖 three.js，且没有修改 `showcase/` 下的展示线文件。接入方式见 `tools/vrm_face/README.md`。
-- 当前尚未做真实浏览器端的主观 A/B 与端到端延迟回归；这是接入展示线后的下一步。
+- P0-2 已实现：`tools/vrm_face/morphscan.mjs`，扫描 `BRW_*` / `EYE_*` / `MTH_*`，生成运行时 custom expression profile；`sample-a` 生成 20 个，`sample-b` 与 `three-vrm-girl` 生成 21 个；19 项 Node 测试通过。两个测试文件合计 37 项。
+- `tools/vrm_face/` 是上游源码与测试（见 PR #25）；展示线运行副本位于 `showcase/frontend/src/vrm_face/`，内容与上游一致。
+- 接入已由 #22/#23 完成：`avatar.js` 在加载模型后建立 profile/mapper，默认 preset 模式，custom 模式通过展示线开关切换；两个模块本身不依赖 three.js。接入方式见 `tools/vrm_face/README.md`。
+- 当前尚未做真实浏览器端的主观 A/B 与端到端延迟回归；这是后续展示线验证的重点。
 
 ---
 
