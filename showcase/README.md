@@ -19,6 +19,11 @@ Python 后端（`backend/`）保留为开发调试工具与旧 fusion 链路，�
   `assets/vrm/sample-a.vrm`、`assets/vrm/sample-b.vrm` 是本地登记的两个 VRoid 样例，部署时需另行上传。
 - 发布新模型/皮套人：文件放进对应目录 + manifest 版本号 +1，访客下次打开自动更新。
 
+## 摄像头镜像
+
+摄像头预览是镜像的（自拍习惯），但 MediaPipe 输入是未镜像的原始帧。驱动 VRM 时对 head yaw / roll 取反、
+左右眼视线交换（`src/mirror.js`）；照片 / 视频预览不镜像，不做处理。
+
 ## 性能测试（ZONE 03）
 
 页面在皮套人预览与「了解更多」之间提供一键性能测试：
