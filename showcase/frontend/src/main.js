@@ -7,6 +7,7 @@ import { SourceInput } from "./input.js?v=7";
 import { poseMetrics, handMetrics } from "./metrics.js?v=7";
 import * as perception from "./perception.js?v=7";
 import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=7";
+import { createBenchmarkPanel } from "./benchmark.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -66,6 +67,9 @@ let avatarEntries = [];
 let activeAvatarName = FALLBACK_AVATAR.name;
 let loadedAvatarName = null;
 let avatarLoadingPromise = null;
+let manifestCache = null;
+let benchActive = false;
+let bench = null;
 
 // 版本：A 面部（当前）；B 全身（二期，按钮置灰）
 const MODE_VIEWS = { a: ["head"], b: ["head", "half", "full"] };
@@ -115,8 +119,10 @@ async function refreshModels() {
   let manifest;
   try {
     manifest = await fetchManifest();
+    manifestCache = manifest;
   } catch {
     manifest = { models: [FALLBACK_AVATAR] };
+    manifestCache = manifest;
     setAvatarError("manifest 读取失败，皮套人使用内置默认条目");
   }
 
@@ -315,7 +321,7 @@ async function startCamera() {
 
 async function cameraLoop() {
   const video = els.sourceVideo;
-  while (camRunning && state === "camera") {
+  while (camRunning && state === "camera" && !benchActive) {
     if (video.readyState >= 2 && faceLmVideo) {
       try {
         const frame = perception.toFrame(faceLmVideo.detectForVideo(video, performance.now()));
@@ -509,6 +515,33 @@ async function boot() {
     showOverlay("这个浏览器不支持 WebGL，换 Chrome / Edge 试试", false);
     return;
   }
+  bench = createBenchmarkPanel({
+    ensureAvatar: ensureAvatarLoaded,
+    // benchmark 只驱动皮套人，不干扰 ZONE 01 的网格 / 读数
+    applyFrame: (frame) => {
+      if (!frame) return;
+      avatar.setBlendshapes(frame.blendshapes);
+      if (frame.headEuler) avatar.setHeadEuler(frame.headEuler);
+    },
+    getLandmarker: () => faceLmVideo,
+    getAvatar: () => avatar,
+    getInfo: () => {
+      const model = manifestCache?.models?.find((m) => m.name === activeModelName);
+      const av = avatarEntries.find((e) => e.name === activeAvatarName);
+      return {
+        model: { name: activeModelName, version: model?.version || "unknown" },
+        avatar: { name: activeAvatarName, version: av?.version || "unknown" },
+      };
+    },
+    getActiveCamera: () => (state === "camera" && els.sourceVideo.readyState >= 2
+      ? { video: els.sourceVideo }
+      : null),
+    onStart: () => { benchActive = true; },
+    onEnd: () => {
+      benchActive = false;
+      if (camRunning && state === "camera") cameraLoop();
+    },
+  });
   // 模型就绪：IndexedDB 有缓存则零网络，否则带进度下载
   setStatus("首次加载推理引擎（wasm 约 13MB，仅第一次慢）…");
   let modelCacheHit = false;
@@ -528,6 +561,7 @@ async function boot() {
   }
   await refreshModels();
   setStatus(`待机（${modelCacheHit ? "模型来自本地缓存" : "模型已更新"} · 皮套人按需加载）`);
+  bench?.setReady(true);
   const savedView = localStorage.getItem("dash.view");
   if (savedView && MODE_VIEWS[mode].includes(savedView)) {
     avatar.setView(savedView);

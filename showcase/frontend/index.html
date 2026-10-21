@@ -129,6 +129,56 @@
       </div>
     </section>
 
+    <!-- ZONE 03 性能测试（Benchmark）：真实媒体输入 + 30 FPS 硬约束 -->
+    <section class="paper-card benchmark-card" id="benchmark-card">
+      <span class="pushpin pin-yellow"></span>
+      <span class="pushpin pin-green"></span>
+      <div class="strip-head">
+        <h3>性能测试</h3>
+        <span class="mono strip-tag">BENCHMARK · 30 FPS / 33 MS</span>
+      </div>
+
+      <div class="bench-controls mono">
+        <label>信号源
+          <select id="bench-source">
+            <option value="builtin">内置头像（隐藏输入）</option>
+            <option value="local-image">本地图片</option>
+            <option value="local-video">本地视频</option>
+            <option value="camera">摄像头</option>
+          </select>
+        </label>
+        <button class="btn btn-ghost" id="bench-file-btn" hidden>选择文件</button>
+        <input type="file" id="bench-file" hidden>
+        <span class="bench-file" id="bench-file-name"></span>
+        <span class="bench-sep"></span>
+        <label>方式
+          <select id="bench-mode">
+            <option value="duration">按时长</option>
+            <option value="frames">按帧数</option>
+          </select>
+        </label>
+        <label>
+          <input type="number" id="bench-value" min="5" max="600" value="30">
+          <span id="bench-unit">s</span>
+        </label>
+        <button class="btn btn-primary" id="bench-start" disabled>开始测试</button>
+        <button class="btn" id="bench-abort" hidden>中止</button>
+      </div>
+
+      <div class="bench-live" id="bench-live" hidden>
+        <div class="bench-live-row mono">
+          <span><b id="bench-live-fps">—</b> FPS</span>
+          <span>感知 <b id="bench-live-perception">—</b> ms</span>
+          <span>rig+渲染 <b id="bench-live-rig">—</b> ms</span>
+          <span id="bench-live-frames">预热</span>
+        </div>
+        <div class="bench-progress"><i id="bench-progress-bar"></i></div>
+      </div>
+
+      <p class="bench-hint mono" id="bench-status">默认 30 s；丢弃前 1 s 预热；后台标签页会中止测试。</p>
+      <div class="bench-result" id="bench-result" hidden></div>
+    </section>
+
     <!-- 底部横条：landing=示例拍立得 / stage=实时读数 -->
     <aside class="paper-card strip" id="strip">
       <span class="pushpin pin-yellow"></span>
