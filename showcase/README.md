@@ -35,7 +35,12 @@ Python 后端（`backend/`）保留为开发调试工具与旧 fusion 链路，�
   `snapMapper`，避免单帧被当成中性样本。
 - 视线优先写入骨骼 `vrm.lookAt.yaw/pitch`，并设置 `autoUpdate = false`；没有骨骼 lookAt 时回退到 look expression。
   注意 three-vrm 3.5 的 `applier.type` 是**静态属性**，接入层读的是 `applier.constructor.type`。
-- P0-2 custom expression（`morphscan.mjs`）尚未启用，留待 preset 稳定后接入。
+- P0-2 custom expression 已接入（默认仍走 preset）：vendored `src/vrm_face/morphscan.mjs`，加载时注入
+  `arkit_*` expression；卡脚「面部映射」可在 `preset` / `custom` 间切换，选择写入 localStorage。
+- 注意 VRM 0.x 的 `targetNames` 在 `primitive.extras`，three.js GLTFLoader 只读 `mesh.extras.targetNames`，
+  所以加载后会按 `parser.associations` 把名称补进 `morphTargetDictionary`；否则 custom 扫描会得到 0 个通道。
+- 实测 custom 数量：`sample-a` 20，`sample-b` / `three-vrm-girl` 21。custom 模式不写 `happy/sad/...` preset，
+  切换时统一 `resetValues()`，避免双重计数。
 
 ## 性能测试（ZONE 03）
 

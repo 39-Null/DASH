@@ -1,13 +1,13 @@
 // 状态机与组装：landing / stage(camera|photo|video)
 // 感知全部在浏览器本地（MediaPipe Tasks JS），服务器只是静态托管 + 模型分发。
-import { Avatar } from "./avatar.js?v=12";
-import { MeshOverlay } from "./mesh.js?v=12";
-import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=12";
-import { SourceInput } from "./input.js?v=12";
-import { poseMetrics, handMetrics } from "./metrics.js?v=12";
-import * as perception from "./perception.js?v=12";
-import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=12";
-import { createBenchmarkPanel } from "./benchmark.js?v=12";
+import { Avatar } from "./avatar.js?v=13";
+import { MeshOverlay } from "./mesh.js?v=13";
+import { Readout, GROUPS_A, GROUPS_B } from "./readout.js?v=13";
+import { SourceInput } from "./input.js?v=13";
+import { poseMetrics, handMetrics } from "./metrics.js?v=13";
+import * as perception from "./perception.js?v=13";
+import { ensureEntry, ensureModel, blobToBuffer, fetchManifest, modelKind } from "./modelstore.js?v=13";
+import { createBenchmarkPanel } from "./benchmark.js?v=13";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -27,6 +27,7 @@ const els = {
   nofaceBadge: $("noface-badge"),
   renderIdle: $("render-idle"),
   modelSelect: $("model-select"),
+  faceModeSelect: $("face-mode-select"),
   avatarSelect: $("avatar-select"),
   avatarProgress: $("avatar-progress"),
   avatarProgressText: $("avatar-progress-text"),
@@ -74,6 +75,7 @@ let bench = null;
 // 版本：A 面部（当前）；B 全身（二期，按钮置灰）
 const MODE_VIEWS = { a: ["head"], b: ["head", "half", "full"] };
 let mode = "a";
+let faceMode = "preset"; // preset | custom
 
 const input = new SourceInput({ box: els.sourceBox, image: els.sourceImage, video: els.sourceVideo });
 const mesh = new MeshOverlay(els.meshCanvas);
@@ -435,6 +437,14 @@ function bindEvents() {
   els.btnSecondary.addEventListener("click", () => els.fileInput.click());
   els.stopBtn.addEventListener("click", backToLanding);
   els.modelSelect.addEventListener("change", onModelChange);
+  els.faceModeSelect.addEventListener("change", () => {
+    faceMode = els.faceModeSelect.value === "custom" ? "custom" : "preset";
+    localStorage.setItem("dash.faceMode", faceMode);
+    avatar?.setFaceMode(faceMode);
+    setStatus(faceMode === "custom"
+      ? "面部映射：custom（实验）"
+      : "面部映射：preset");
+  });
   els.avatarSelect.addEventListener("change", onAvatarChange);
   els.meshToggle.addEventListener("change", () => {
     mesh.enabled = els.meshToggle.checked;
@@ -504,6 +514,9 @@ function entrance() {
 /* ---------------- 启动 ---------------- */
 async function boot() {
   bindEvents();
+  const savedFaceMode = localStorage.getItem("dash.faceMode");
+  faceMode = savedFaceMode === "custom" ? "custom" : "preset";
+  els.faceModeSelect.value = faceMode;
   entrance();
   // A 版本只显示「面部」视角（B 版本二期开放后恢复三档）
   document.querySelectorAll(".view-btn").forEach((b) => {
@@ -511,6 +524,7 @@ async function boot() {
   });
   try {
     avatar = new Avatar($("avatar-canvas"));
+    avatar.setFaceMode(faceMode, { reapply: false });
   } catch {
     showOverlay("这个浏览器不支持 WebGL，换 Chrome / Edge 试试", false);
     return;
