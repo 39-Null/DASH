@@ -25,3 +25,12 @@ export function pickGaze(cats, mirror) {
   }
   return mirror ? { left: right, right: left } : { left, right };
 }
+
+// 摄像头方向：部分笔记本（如华为 FHD Camera 5959:0107）的传感器倒装，
+// getUserMedia 没有方向元数据，浏览器不会自动纠正。返回 0 或 180。
+// saved 是用户对该 deviceId 的显式选择（"0" / "180"），优先于自动识别。
+export function cameraRotateFor(label, saved) {
+  if (saved === "180") return 180;
+  if (saved === "0") return 0;
+  return /FHD Camera \(5959:0107\)/i.test(label || "") ? 180 : 0;
+}

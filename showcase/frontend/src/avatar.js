@@ -2,8 +2,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
-import { Rig } from "./rig.js?v=9";
-import { mirrorHeadEuler, pickGaze } from "./mirror.js?v=9";
+import { Rig } from "./rig.js?v=10";
+import { mirrorHeadEuler, pickGaze } from "./mirror.js?v=10";
 
 function bs(scoreMap, name) {
   return scoreMap.get(name) ?? 0;
